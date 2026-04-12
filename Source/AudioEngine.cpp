@@ -6,11 +6,10 @@ static constexpr float kTwoPi = 6.283185307179586f;
 AudioEngine::AudioEngine(SynthSharedState& sharedState)
     : state(sharedState)
 {
-    // Initialise oscillator frequencies to harmonics of C4
     for (int i = 0; i < NUM_OSCILLATORS; ++i)
     {
-        const float rootHz    = semitoneToHz(0); // C4
-        oscs[i].frequency     = rootHz * float(i + 1); // harmonics 1×,2×,3×,4×
+        const float rootHz    = semitoneToHz(0);
+        oscs[i].frequency     = rootHz * float(i + 1);
         oscs[i].currentAmp    = state.globalAmplitudes[i].load(std::memory_order_relaxed);
         oscs[i].rampStartAmp  = oscs[i].currentAmp;
         oscs[i].rampTargetAmp = oscs[i].currentAmp;
@@ -20,11 +19,10 @@ AudioEngine::AudioEngine(SynthSharedState& sharedState)
 AudioEngine::~AudioEngine() = default;
 
 //==============================================================================
-int AudioEngine::calcSamplesPerStep(float bpm) const
+int AudioEngine::calcSamplesPerStep(float bpm) const noexcept
 {
-    // 1 step = 1 quarter-note
-    const float secondsPerBeat = 60.0f / juce::jlimit(40.0f, 200.0f, bpm);
-    return juce::jmax(1, static_cast<int>(sampleRate * secondsPerBeat));
+    const float secs = 60.0f / juce::jlimit(40.0f, 200.0f, bpm);
+    return juce::jmax(1, int(sampleRate * secs));
 }
 
 //==============================================================================
@@ -33,9 +31,16 @@ void AudioEngine::triggerStep(int step)
     currentStep = step;
     state.currentPlayStep.store(step, std::memory_order_relaxed);
 
-    const bool   isCustom = state.stepIsCustom[step].load(std::memory_order_relaxed);
-    const int    semitone = state.stepPitch[step]   .load(std::memory_order_relaxed);
-    const float  rootHz   = semitoneToHz(semitone);
+    const bool  isCustom = state.stepIsCustom[step].load(std::memory_order_relaxed);
+    const int   semitone = state.stepPitch[step]   .load(std::memory_order_relaxed);
+    const float rootHz   = semitoneToHz(semitone);
+
+    // Attack / decay envelope (convert ms → samples, clamped)
+    const float attackMs  = state.stepAttack[step].load(std::memory_order_relaxed);
+    const float decayMs   = state.stepDecay[step] .load(std::memory_order_relaxed);
+    envAttackSamps = int(juce::jmax(0.0f, attackMs) / 1000.0f * sampleRate);
+    envDecaySamps  = int(juce::jmax(0.0f, decayMs)  / 1000.0f * sampleRate);
+    envSamplePos   = 0;
 
     for (int i = 0; i < NUM_OSCILLATORS; ++i)
     {
@@ -43,24 +48,28 @@ void AudioEngine::triggerStep(int step)
         oscs[i].rampStartAmp = oscs[i].currentAmp;
         oscs[i].rampTargetAmp = isCustom
             ? state.stepAmplitudes[step][i].load(std::memory_order_relaxed)
-            : state.globalAmplitudes[i]   .load(std::memory_order_relaxed);
+            : state.globalAmplitudes[i]    .load(std::memory_order_relaxed);
 
-        // Frequency jumps immediately — step sequencer semantics
+        // Per-oscillator morph speed: rampDuration = stepDuration / speed
+        const float speed = juce::jmax(0.01f,
+            state.morphSpeed[i][step].load(std::memory_order_relaxed));
+        oscs[i].rampDuration = juce::jmax(1, int(float(samplesPerStep) / speed));
+        oscs[i].rampProgress = 0;
+
+        // Frequency jumps immediately (step-sequencer semantics)
         oscs[i].frequency = rootHz * float(i + 1);
     }
-
-    rampProgress = 0;
-    rampDuration = samplesPerStep;
 }
 
 //==============================================================================
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
-    sampleRate   = static_cast<float>(device->getCurrentSampleRate());
+    sampleRate    = float(device->getCurrentSampleRate());
     samplesPerStep = calcSamplesPerStep(state.bpm.load());
     sampleCounter  = 0;
-    rampProgress   = 0;
-    rampDuration   = samplesPerStep;
+    envSamplePos   = 0;
+    envAttackSamps = 0;
+    envDecaySamps  = 0;
     wasPlaying     = false;
     currentStep    = -1;
 }
@@ -68,8 +77,8 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 void AudioEngine::audioDeviceStopped()
 {
     state.currentPlayStep.store(-1, std::memory_order_relaxed);
-    currentStep  = -1;
-    wasPlaying   = false;
+    currentStep = -1;
+    wasPlaying  = false;
 }
 
 //==============================================================================
@@ -81,7 +90,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     int            numSamples,
     const juce::AudioIODeviceCallbackContext&)
 {
-    // Zero all output channels first
     for (int ch = 0; ch < numOutputChannels; ++ch)
         if (outputChannelData[ch])
             juce::FloatVectorOperations::clear(outputChannelData[ch], numSamples);
@@ -92,17 +100,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     float* outL = outputChannelData[0];
     float* outR = numOutputChannels > 1 ? outputChannelData[1] : nullptr;
 
-    // Read transport parameters once per callback
     const bool  playing    = state.isPlaying .load(std::memory_order_relaxed);
     const float bpm        = state.bpm       .load(std::memory_order_relaxed);
     const float masterGain = state.masterGain.load(std::memory_order_relaxed);
 
     samplesPerStep = calcSamplesPerStep(bpm);
 
-    // Detect play start / stop transitions
+    // Play / stop transitions
     if (playing && !wasPlaying)
     {
-        // Fresh start: jump to step 0 immediately
         sampleCounter = 0;
         triggerStep(0);
     }
@@ -113,7 +119,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
     wasPlaying = playing;
 
-    // ---- Per-sample loop -------------------------------------------------
+    // ---- Per-sample loop ---------------------------------------------------
     for (int n = 0; n < numSamples; ++n)
     {
         // Advance sequencer clock
@@ -127,18 +133,23 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             ++sampleCounter;
         }
 
-        // Compute linear ramp interpolation factor t ∈ [0,1]
-        // Reaches 1.0 exactly at the next step boundary.
-        const float t = (rampDuration > 0)
-            ? juce::jlimit(0.0f, 1.0f, float(rampProgress) / float(rampDuration))
-            : 1.0f;
-        if (rampProgress < rampDuration)
-            ++rampProgress;
+        // Compute envelope gain for this sample
+        const float envGain = envelopeGain();
+        ++envSamplePos;
 
-        // Synthesise — sum of 4 sine oscillators
+        // Sum oscillators — each has its own independent ramp
         float sample = 0.0f;
         for (int i = 0; i < NUM_OSCILLATORS; ++i)
         {
+            // Per-oscillator linear ramp (independent rampProgress/rampDuration)
+            const float t = oscs[i].rampDuration > 0
+                ? juce::jlimit(0.0f, 1.0f,
+                      float(oscs[i].rampProgress) / float(oscs[i].rampDuration))
+                : 1.0f;
+
+            if (oscs[i].rampProgress < oscs[i].rampDuration)
+                ++oscs[i].rampProgress;
+
             oscs[i].currentAmp = oscs[i].rampStartAmp
                 + (oscs[i].rampTargetAmp - oscs[i].rampStartAmp) * t;
 
@@ -149,13 +160,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 oscs[i].phase -= kTwoPi;
         }
 
-        sample *= masterGain;
+        sample *= envGain * masterGain;
 
         outL[n] = sample;
         if (outR) outR[n] = sample;
     }
 
-    // Write live amplitudes for the waveform display (once per callback)
+    // Publish live amplitudes for the waveform display (once per callback)
     for (int i = 0; i < NUM_OSCILLATORS; ++i)
         state.liveAmplitudes[i].store(oscs[i].currentAmp, std::memory_order_relaxed);
 }

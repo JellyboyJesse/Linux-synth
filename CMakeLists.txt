@@ -33,8 +33,8 @@ target_sources(LinuxSynth
         Source/Main.cpp
         Source/MainComponent.cpp
         Source/AudioEngine.cpp
-        Source/SequencerGrid.cpp
-        Source/HarmonicEditor.cpp
+        Source/MatrixView.cpp
+        Source/WaveformDisplay.cpp
         Source/TransportBar.cpp
         Source/WireframeLookAndFeel.cpp
 )

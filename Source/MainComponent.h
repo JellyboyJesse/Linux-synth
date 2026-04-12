@@ -3,22 +3,22 @@
 #include "SynthState.h"
 #include "AudioEngine.h"
 #include "WireframeLookAndFeel.h"
-#include "SequencerGrid.h"
-#include "HarmonicEditor.h"
+#include "MatrixView.h"
+#include "WaveformDisplay.h"
 #include "TransportBar.h"
 
 //==============================================================================
 // MainComponent
 //
-// Top-level content component.  Owns:
-//   • SynthSharedState  — the shared lock-free state object
-//   • AudioDeviceManager — JUCE audio device (ALSA / JACK)
-//   • AudioEngine        — the real-time audio callback
-//   • WireframeLookAndFeel — applied globally
-//   • All UI sub-components
+// Top-level content component.
 //
-// A juce::Timer (30 ms) polls the audio-thread feedback fields and updates
-// the UI step-highlight and waveform display.
+// Layout (top → bottom):
+//   TransportBar     — fixed height, full width
+//   Viewport         — fills remaining space above waveform; contains MatrixView
+//   WaveformDisplay  — fixed height strip at the bottom
+//
+// A 33 Hz Timer polls audio-thread feedback and drives the playing-step
+// highlight in the MatrixView.
 //==============================================================================
 class MainComponent : public juce::Component,
                       public juce::Timer
@@ -33,35 +33,22 @@ public:
 
 private:
     //==========================================================================
-    // Shared state + engine (construction order matters)
+    // Construction order matters: state before engine, engine before UI
     //==========================================================================
     SynthSharedState         synthState;
     juce::AudioDeviceManager deviceManager;
     AudioEngine              audioEngine { synthState };
 
-    //==========================================================================
-    // Look and feel
-    //==========================================================================
-    WireframeLookAndFeel wireframeLAF;
+    WireframeLookAndFeel     wireframeLAF;
 
-    //==========================================================================
-    // UI components
-    //==========================================================================
-    TransportBar    transportBar { synthState };
-    SequencerGrid   sequencerGrid { synthState };
-    HarmonicEditor  harmonicEditor { synthState };
+    TransportBar             transportBar    { synthState };
+    MatrixView               matrixView      { synthState };
+    juce::Viewport           matrixViewport;
+    WaveformDisplay          waveformDisplay { synthState };
 
-    //==========================================================================
-    // State tracked by the UI-update timer
-    //==========================================================================
-    int  lastReportedStep = -1;
-    int  selectedStep     = -1;
+    int lastReportedStep = -1;
 
-    //==========================================================================
-    // Helpers
-    //==========================================================================
     void setupAudio();
-    void onStepSelected(int step);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

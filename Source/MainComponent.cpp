@@ -2,48 +2,34 @@
 
 MainComponent::MainComponent()
 {
-    // Apply wireframe look and feel globally
     juce::LookAndFeel::setDefaultLookAndFeel(&wireframeLAF);
 
-    // ---- Transport bar -------------------------------------------------------
+    // Transport bar
     addAndMakeVisible(transportBar);
-
     transportBar.onPlayStateChanged = [this](bool isPlaying)
     {
         if (!isPlaying)
         {
-            // Reset step highlight when stopped
             lastReportedStep = -1;
-            sequencerGrid.setCurrentPlayStep(-1);
+            matrixView.setCurrentPlayStep(-1);
         }
     };
 
-    // ---- Sequencer grid -------------------------------------------------------
-    addAndMakeVisible(sequencerGrid);
+    // Matrix view inside a viewport
+    matrixViewport.setViewedComponent(&matrixView, false);
+    matrixViewport.setScrollBarsShown(true, false);
+    matrixViewport.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
+    addAndMakeVisible(matrixViewport);
 
-    sequencerGrid.onStepSelected = [this](int step) { onStepSelected(step); };
+    matrixView.onStepSelected = [](int /*step*/) {};
 
-    sequencerGrid.onPitchChanged = [this](int /*step*/, int /*semi*/)
-    {
-        // Pitch is already written to state atomics in SequencerGrid::mouseDown.
-        // Nothing extra needed here.
-    };
+    // Waveform display
+    addAndMakeVisible(waveformDisplay);
 
-    // ---- Harmonic editor -----------------------------------------------------
-    addAndMakeVisible(harmonicEditor);
-
-    harmonicEditor.onStateChanged = [this]()
-    {
-        sequencerGrid.repaint(); // custom/inherited toggle may affect display
-    };
-
-    // ---- Audio ---------------------------------------------------------------
     setupAudio();
-
-    // ---- UI update timer -----------------------------------------------------
     startTimerHz(33);
 
-    setSize(940, 580);
+    setSize(940, 700);
 }
 
 MainComponent::~MainComponent()
@@ -56,59 +42,46 @@ MainComponent::~MainComponent()
 //==============================================================================
 void MainComponent::setupAudio()
 {
-    const juce::String err = deviceManager.initialise(
-        0,       // numInputChannels
-        2,       // numOutputChannels
-        nullptr, // savedState XML
-        true);   // selectDefaultDeviceOnFailure
-
+    const juce::String err = deviceManager.initialise(0, 2, nullptr, true);
     if (err.isNotEmpty())
-    {
-        // Non-fatal: log to stderr and continue; the device manager will
-        // fall back to a null device so the app still opens.
-        juce::Logger::writeToLog("Audio device error: " + err);
-    }
+        juce::Logger::writeToLog("Audio init error: " + err);
 
     deviceManager.addAudioCallback(&audioEngine);
 }
 
 //==============================================================================
-void MainComponent::onStepSelected(int step)
-{
-    selectedStep = step;
-    sequencerGrid.setSelectedStep(step);
-    harmonicEditor.setSelectedStep(step);
-}
-
-//==============================================================================
 void MainComponent::timerCallback()
 {
-    const int playStep = synthState.currentPlayStep.load(std::memory_order_relaxed);
-    if (playStep != lastReportedStep)
+    const int step = synthState.currentPlayStep.load(std::memory_order_relaxed);
+    if (step != lastReportedStep)
     {
-        lastReportedStep = playStep;
-        sequencerGrid.setCurrentPlayStep(playStep);
+        lastReportedStep = step;
+        matrixView.setCurrentPlayStep(step);
     }
-    // Waveform repaint is handled by HarmonicEditor's own Timer
 }
 
 //==============================================================================
 void MainComponent::resized()
 {
-    const int pad       = 10;
-    const int transportH = 52;
-    const int w         = getWidth();
-    const int h         = getHeight();
+    static constexpr int kPad        = 8;
+    static constexpr int kTransportH = 52;
+    static constexpr int kWaveH      = 80;
 
-    transportBar.setBounds(pad, pad, w - 2 * pad, transportH);
+    const int w = getWidth();
+    const int h = getHeight();
 
-    const int contentY = pad + transportH + pad;
-    const int contentH = h - contentY - pad;
-    const int gridW    = juce::roundToInt(float(w - 3 * pad) * 0.58f);
-    const int editorW  = w - 3 * pad - gridW;
+    transportBar.setBounds(kPad, kPad, w - 2 * kPad, kTransportH);
 
-    sequencerGrid  .setBounds(pad,          contentY, gridW,   contentH);
-    harmonicEditor .setBounds(pad * 2 + gridW, contentY, editorW, contentH);
+    const int matrixY = kPad + kTransportH + kPad;
+    const int waveY   = h - kWaveH - kPad;
+    const int matrixH = waveY - matrixY - kPad;
+
+    // Size the actual MatrixView to its preferred height (may exceed viewport)
+    const int prefH = matrixView.getPreferredHeight();
+    matrixView.setSize(w - 2 * kPad, juce::jmax(prefH, matrixH));
+    matrixViewport.setBounds(kPad, matrixY, w - 2 * kPad, matrixH);
+
+    waveformDisplay.setBounds(kPad, waveY, w - 2 * kPad, kWaveH);
 }
 
 //==============================================================================
