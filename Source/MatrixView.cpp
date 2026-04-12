@@ -29,15 +29,10 @@ void MatrixView::buildRows()
     push(RowType::HarmonicBar,   "H3",              2, kBarH);
     push(RowType::HarmonicBar,   "H4",              3, kBarH);
 
-    push(RowType::SectionHeader, "morph speed",     0, kSectionH);
-    push(RowType::MorphSlider,   "p1 speed",        0, kSliderH);
-    push(RowType::MorphSlider,   "p2 speed",        1, kSliderH);
-    push(RowType::MorphSlider,   "p3 speed",        2, kSliderH);
-    push(RowType::MorphSlider,   "p4 speed",        3, kSliderH);
-
-    push(RowType::SectionHeader, "envelope",        0, kSectionH);
-    push(RowType::AttackSlider,  "attack",          0, kSliderH);
-    push(RowType::DecaySlider,   "decay",           0, kSliderH);
+    push(RowType::SectionHeader,  "envelope",        0, kSectionH);
+    push(RowType::AttackSlider,   "attack",          0, kSliderH);
+    push(RowType::DecaySlider,    "decay",           0, kSliderH);
+    push(RowType::DurationSlider, "step duration",   0, kSliderH);
 }
 
 int MatrixView::getPreferredHeight() const
@@ -101,10 +96,10 @@ float MatrixView::normFromRaw(const RowInfo& row, float raw) const
 {
     switch (row.type)
     {
-        case RowType::HarmonicBar:  return juce::jlimit(0.0f, 1.0f, raw);
-        case RowType::MorphSlider:  return juce::jlimit(0.0f, 1.0f, (raw - 0.1f) / 2.9f);
-        case RowType::AttackSlider: return juce::jlimit(0.0f, 1.0f, raw / 1000.0f);
-        case RowType::DecaySlider:  return juce::jlimit(0.0f, 1.0f, raw / 2000.0f);
+        case RowType::HarmonicBar:    return juce::jlimit(0.0f, 1.0f, raw);
+        case RowType::AttackSlider:   return juce::jlimit(0.0f, 1.0f, raw / 1000.0f);
+        case RowType::DecaySlider:    return juce::jlimit(0.0f, 1.0f, raw / 2000.0f);
+        case RowType::DurationSlider: return juce::jlimit(0.0f, 1.0f, (raw - 0.1f) / 7.9f);
         default: return 0.0f;
     }
 }
@@ -114,10 +109,10 @@ float MatrixView::rawFromNorm(const RowInfo& row, float norm) const
     const float n = juce::jlimit(0.0f, 1.0f, norm);
     switch (row.type)
     {
-        case RowType::HarmonicBar:  return n;
-        case RowType::MorphSlider:  return 0.1f + n * 2.9f;
-        case RowType::AttackSlider: return n * 1000.0f;
-        case RowType::DecaySlider:  return n * 2000.0f;
+        case RowType::HarmonicBar:    return n;
+        case RowType::AttackSlider:   return n * 1000.0f;
+        case RowType::DecaySlider:    return n * 2000.0f;
+        case RowType::DurationSlider: return 0.1f + n * 7.9f;
         default: return 0.0f;
     }
 }
@@ -130,15 +125,15 @@ float MatrixView::getCellValue(const RowInfo& row, int step) const
         case RowType::HarmonicBar:
             return normFromRaw(row,
                 state.stepAmplitudes[step][osc].load(std::memory_order_relaxed));
-        case RowType::MorphSlider:
-            return normFromRaw(row,
-                state.morphSpeed[osc][step].load(std::memory_order_relaxed));
         case RowType::AttackSlider:
             return normFromRaw(row,
                 state.stepAttack[step].load(std::memory_order_relaxed));
         case RowType::DecaySlider:
             return normFromRaw(row,
                 state.stepDecay[step].load(std::memory_order_relaxed));
+        case RowType::DurationSlider:
+            return normFromRaw(row,
+                state.stepDuration[step].load(std::memory_order_relaxed));
         default: return 0.0f;
     }
 }
@@ -153,14 +148,14 @@ void MatrixView::setCellValue(const RowInfo& row, int step, float normalised)
             state.stepAmplitudes[step][osc].store(raw, std::memory_order_relaxed);
             state.stepIsCustom[step].store(true, std::memory_order_relaxed);
             break;
-        case RowType::MorphSlider:
-            state.morphSpeed[osc][step].store(raw, std::memory_order_relaxed);
-            break;
         case RowType::AttackSlider:
             state.stepAttack[step].store(raw, std::memory_order_relaxed);
             break;
         case RowType::DecaySlider:
             state.stepDecay[step].store(raw, std::memory_order_relaxed);
+            break;
+        case RowType::DurationSlider:
+            state.stepDuration[step].store(raw, std::memory_order_relaxed);
             break;
         default: break;
     }
@@ -273,9 +268,9 @@ void MatrixView::paint(juce::Graphics& g)
             case RowType::SectionHeader:            drawSectionHeader(g, row); break;
             case RowType::Pitch:                    drawPitchRow(g, row);      break;
             case RowType::HarmonicBar:              drawBarRow(g, row);        break;
-            case RowType::MorphSlider:
             case RowType::AttackSlider:
-            case RowType::DecaySlider:              drawSliderRow(g, row);     break;
+            case RowType::DecaySlider:
+            case RowType::DurationSlider:           drawSliderRow(g, row);     break;
         }
     }
 }
@@ -485,9 +480,9 @@ void MatrixView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
         // Value label
         const float raw = rawFromNorm(r, norm);
         juce::String valStr;
-        if      (r.type == RowType::MorphSlider)  valStr = juce::String(raw, 2) + "x";
-        else if (r.type == RowType::AttackSlider)  valStr = juce::String(int(raw)) + "ms";
-        else if (r.type == RowType::DecaySlider)   valStr = juce::String(int(raw)) + "ms";
+        if      (r.type == RowType::AttackSlider)   valStr = juce::String(int(raw)) + "ms";
+        else if (r.type == RowType::DecaySlider)    valStr = juce::String(int(raw)) + "ms";
+        else if (r.type == RowType::DurationSlider) valStr = juce::String(raw, 2) + " beats";
 
         g.setColour(Palette::dimOutline());
         g.setFont(juce::Font(9.0f));

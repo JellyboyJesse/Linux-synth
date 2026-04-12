@@ -59,7 +59,7 @@ private:
     // Row types and layout
     //==========================================================================
     enum class RowType { SectionHeader, Pitch, HarmonicBar,
-                         MorphSlider, AttackSlider, DecaySlider };
+                         AttackSlider, DecaySlider, DurationSlider };
 
     struct RowInfo
     {

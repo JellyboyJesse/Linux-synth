@@ -52,10 +52,10 @@ private:
     //==========================================================================
     // Sequencer clock
     //==========================================================================
-    int  currentStep    = -1;
-    int  sampleCounter  = 0;
-    int  samplesPerStep = 22050;
-    bool wasPlaying     = false;
+    int  currentStep     = -1;
+    int  sampleCounter   = 0;
+    int  samplesThisStep = 22050; // recomputed from stepDuration at each trigger
+    bool wasPlaying      = false;
 
     //==========================================================================
     // Per-step amplitude envelope (linear attack → decay)
@@ -79,10 +79,9 @@ private:
     }
 
     //==========================================================================
-    // Helpers
+    // Helper
     //==========================================================================
     void triggerStep(int step);
-    int  calcSamplesPerStep(float bpm) const noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };
