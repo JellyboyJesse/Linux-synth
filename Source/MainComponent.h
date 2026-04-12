@@ -4,21 +4,21 @@
 #include "AudioEngine.h"
 #include "WireframeLookAndFeel.h"
 #include "MatrixView.h"
+#include "EffectsView.h"
 #include "WaveformDisplay.h"
 #include "TransportBar.h"
 
 //==============================================================================
 // MainComponent
 //
-// Top-level content component.
-//
 // Layout (top → bottom):
-//   TransportBar     — fixed height, full width
-//   Viewport         — fills remaining space above waveform; contains MatrixView
-//   WaveformDisplay  — fixed height strip at the bottom
+//   TransportBar  — transport controls
+//   TabBar        — "Notes" / "Effects" toggle buttons (36 px)
+//   ContentView   — Viewport containing MatrixView  (Notes tab)
+//                 — Viewport containing EffectsView (Effects tab)
+//   WaveformDisplay — full-width waveform strip (80 px)
 //
-// A 33 Hz Timer polls audio-thread feedback and drives the playing-step
-// highlight in the MatrixView.
+// A 33 Hz Timer drives the playing-step highlight in both views.
 //==============================================================================
 class MainComponent : public juce::Component,
                       public juce::Timer
@@ -33,8 +33,6 @@ public:
 
 private:
     //==========================================================================
-    // Construction order matters: state before engine, engine before UI
-    //==========================================================================
     SynthSharedState         synthState;
     juce::AudioDeviceManager deviceManager;
     AudioEngine              audioEngine { synthState };
@@ -42,13 +40,26 @@ private:
     WireframeLookAndFeel     wireframeLAF;
 
     TransportBar             transportBar    { synthState };
-    MatrixView               matrixView      { synthState };
+
+    // Tab buttons
+    juce::TextButton         tabNotes   { "Notes"   };
+    juce::TextButton         tabEffects { "Effects" };
+
+    // Notes tab
+    MatrixView               matrixView  { synthState };
     juce::Viewport           matrixViewport;
+
+    // Effects tab
+    EffectsView              effectsView { synthState };
+    juce::Viewport           effectsViewport;
+
     WaveformDisplay          waveformDisplay { synthState };
 
-    int lastReportedStep = -1;
+    int  lastReportedStep = -1;
+    bool showingEffects   = false;
 
     void setupAudio();
+    void showTab(bool effects);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

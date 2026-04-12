@@ -30,7 +30,9 @@ inline float semitoneToHz(int semitone)
 // thread.  Every field is std::atomic — no locks required.
 //
 //  UI → audio : stepAmplitudes, stepPitch, stepIsCustom, globalAmplitudes,
-//               stepDuration, stepAttack, stepDecay, bpm, masterGain, isPlaying
+//               stepDuration, stepAttack, stepDecay,
+//               stretchRatio, freqShift, phaseRand, ksDecay, ksTune,
+//               bpm, masterGain, isPlaying
 //  audio → UI : currentPlayStep, liveAmplitudes
 //==============================================================================
 struct SynthSharedState
@@ -51,6 +53,13 @@ struct SynthSharedState
     // Governs both the step clock length and the amplitude ramp duration.
     // e.g. 1.0 = one quarter-note, 0.5 = eighth-note, 2.0 = half-note.
     std::array<std::atomic<float>, NUM_STEPS> stepDuration;
+
+    // Effects chain — per step (morphed on audio thread like amplitudes)
+    std::array<std::atomic<float>, NUM_STEPS> stretchRatio; // 0.5–2.0, default 1.0
+    std::array<std::atomic<float>, NUM_STEPS> freqShift;    // -200–+200 Hz, default 0.0
+    std::array<std::atomic<float>, NUM_STEPS> phaseRand;    // 0.0–1.0, default 0.0
+    std::array<std::atomic<float>, NUM_STEPS> ksDecay;      // 0.0–1.0, default 0.0 (bypassed)
+    std::array<std::atomic<float>, NUM_STEPS> ksTune;       // 50–2000 Hz, default 220.0
 
     // Per-step envelope: attack 0–1000 ms, decay 0–2000 ms
     // decay == 0 → no decay (sustained at peak throughout step)
@@ -73,7 +82,12 @@ struct SynthSharedState
             // Stagger default pitches within the 8-note grid range
             stepPitch[s]   .store((s * 2) % PITCH_GRID_ROWS, std::memory_order_relaxed);
             stepIsCustom[s].store(true,                       std::memory_order_relaxed);
-            stepDuration[s].store(1.0f, std::memory_order_relaxed);
+            stepDuration[s]  .store(1.0f,   std::memory_order_relaxed);
+            stretchRatio[s]  .store(1.0f,   std::memory_order_relaxed);
+            freqShift[s]     .store(0.0f,   std::memory_order_relaxed);
+            phaseRand[s]     .store(0.0f,   std::memory_order_relaxed);
+            ksDecay[s]       .store(0.0f,   std::memory_order_relaxed);
+            ksTune[s]        .store(220.0f, std::memory_order_relaxed);
             stepAttack[s]  .store(0.0f, std::memory_order_relaxed);
             stepDecay[s]   .store(0.0f, std::memory_order_relaxed);
             for (int o = 0; o < NUM_OSCILLATORS; ++o)

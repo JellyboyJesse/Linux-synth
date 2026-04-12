@@ -7,11 +7,12 @@
 //
 // Real-time audio callback — no allocations, no locks.
 //
-// Features:
-//   • 4 sine oscillators with per-oscillator independent linear-ramp morph
-//     (rampDuration[i] = samplesPerStep / morphSpeed[i][step])
-//   • BPM-driven step sequencer clock (sample-accurate)
-//   • Per-step linear attack / decay amplitude envelope
+// Signal flow (per sample):
+//   oscillator sum  →  envelope  →  harmonic stretch + freq shift
+//   →  phase drift  →  Karplus-Strong resonator  →  master gain  →  output
+//
+// All effect parameters are morphed using the same linear ramp duration as
+// the oscillator amplitude ramps (samplesThisStep from stepDuration + BPM).
 //==============================================================================
 class AudioEngine : public juce::AudioIODeviceCallback
 {
@@ -35,48 +36,90 @@ private:
     float sampleRate = 44100.0f;
 
     //==========================================================================
-    // Per-oscillator private state (audio thread only)
+    // Per-oscillator private state
     //==========================================================================
     struct OscPrivate
     {
-        float phase          = 0.0f;
-        float frequency      = 440.0f;
-        float currentAmp     = 0.0f;
-        float rampStartAmp   = 0.0f;
-        float rampTargetAmp  = 0.0f;
-        int   rampProgress   = 0;
-        int   rampDuration   = 22050; // in samples; per-oscillator
+        float phase         = 0.0f;
+        float frequency     = 440.0f;
+        float currentAmp    = 0.0f;
+        float rampStartAmp  = 0.0f;
+        float rampTargetAmp = 0.0f;
+        int   rampProgress  = 0;
+        int   rampDuration  = 22050;
     };
     std::array<OscPrivate, NUM_OSCILLATORS> oscs;
+
+    float currentRootHz = 440.0f; // set at each step trigger; used for per-sample freq calc
 
     //==========================================================================
     // Sequencer clock
     //==========================================================================
     int  currentStep     = -1;
     int  sampleCounter   = 0;
-    int  samplesThisStep = 22050; // recomputed from stepDuration at each trigger
+    int  samplesThisStep = 22050;
     bool wasPlaying      = false;
 
     //==========================================================================
-    // Per-step amplitude envelope (linear attack → decay)
+    // Amplitude envelope
     //==========================================================================
     int  envSamplePos   = 0;
     int  envAttackSamps = 0;
     int  envDecaySamps  = 0;
 
-    // Returns envelope gain [0,1] for the current sample position.
-    // attack=0 → instant on; decay=0 → no decay (sustained).
     float envelopeGain() const noexcept
     {
         if (envAttackSamps > 0 && envSamplePos < envAttackSamps)
             return float(envSamplePos) / float(envAttackSamps);
-
-        const int decayPos = envSamplePos - envAttackSamps;
-        if (envDecaySamps > 0 && decayPos < envDecaySamps)
-            return 1.0f - float(decayPos) / float(envDecaySamps);
-
-        return envDecaySamps > 0 ? 0.0f : 1.0f; // silent after decay, or sustained
+        const int dp = envSamplePos - envAttackSamps;
+        if (envDecaySamps > 0 && dp < envDecaySamps)
+            return 1.0f - float(dp) / float(envDecaySamps);
+        return envDecaySamps > 0 ? 0.0f : 1.0f;
     }
+
+    //==========================================================================
+    // Effects chain — morph state (audio thread only)
+    //==========================================================================
+    struct FxParam
+    {
+        float current;
+        float rampFrom;
+        float rampTo;
+        explicit FxParam(float def) noexcept : current(def), rampFrom(def), rampTo(def) {}
+        void trigger(float target) noexcept { rampFrom = current; rampTo = target; }
+        void update(float t) noexcept { current = rampFrom + (rampTo - rampFrom) * t; }
+    };
+
+    FxParam fxStretch  { 1.0f   }; // harmonic stretch ratio  0.5–2.0
+    FxParam fxFreqShift{ 0.0f   }; // global freq shift Hz   -200–+200
+    FxParam fxPhaseRand{ 0.0f   }; // phase randomisation     0–1
+    FxParam fxKsDecay  { 0.0f   }; // Karplus-Strong feedback 0–1
+    FxParam fxKsTune   { 220.0f }; // Karplus-Strong tune Hz  50–2000
+
+    // Shared ramp counter for all effects (same timing as oscillator ramps)
+    int effectRampProgress = 0;
+    int effectRampDuration = 22050;
+
+    //==========================================================================
+    // Phase randomisation — continuous per-oscillator LCG drift
+    //==========================================================================
+    std::array<uint32_t, NUM_OSCILLATORS> phaseDriftLcg {
+        { 0x12345678u, 0x9ABCDEF0u, 0x55AA55AAu, 0xFEDCBA98u }
+    };
+
+    //==========================================================================
+    // Karplus-Strong resonator — pre-allocated, no heap
+    //==========================================================================
+    static constexpr int kKsMaxDelay     = 2048;
+    static constexpr int kKsCrossfadeLen = 64;
+
+    float ksBuffer[kKsMaxDelay] {};  // zero-initialised
+    int   ksWritePos        = 0;
+    float ksPrevSample      = 0.0f;
+    int   ksDelaySamples    = 200;
+    int   ksNewDelaySamples = 200;
+    int   ksCrossfadeProg   = kKsCrossfadeLen; // start settled
+    bool  ksWasActive       = false;
 
     //==========================================================================
     // Helper

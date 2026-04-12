@@ -34,6 +34,7 @@ target_sources(LinuxSynth
         Source/MainComponent.cpp
         Source/AudioEngine.cpp
         Source/MatrixView.cpp
+        Source/EffectsView.cpp
         Source/WaveformDisplay.cpp
         Source/TransportBar.cpp
         Source/WireframeLookAndFeel.cpp
