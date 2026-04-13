@@ -25,12 +25,16 @@ void EffectsView::buildRows()
     push(RowType::SectionHeader, "frequency shift",   0, kSectionH);
     push(RowType::Slider,        "freq shift",        1, kSliderH);
 
-    push(RowType::SectionHeader, "phase",             0, kSectionH);
-    push(RowType::Slider,        "phase rand",        2, kSliderH);
+    push(RowType::SectionHeader, "waveshaping",       0, kSectionH);
+    push(RowType::Slider,        "fold amount",       2, kSliderH);
 
     push(RowType::SectionHeader, "karplus-strong",    0, kSectionH);
     push(RowType::Slider,        "ks decay",          3, kSliderH);
     push(RowType::Slider,        "ks tune",           4, kSliderH);
+
+    push(RowType::SectionHeader, "reverb",            0, kSectionH);
+    push(RowType::Slider,        "reverb size",       5, kSliderH);
+    push(RowType::Slider,        "reverb damp",       6, kSliderH);
 }
 
 int EffectsView::getPreferredHeight() const
@@ -78,19 +82,22 @@ int EffectsView::rowFromY(int y) const
 //==============================================================================
 // Parameter value helpers
 //
-// paramId: 0=stretch (0.5–2.0), 1=freqShift (-200–+200 Hz),
-//          2=phaseRand (0–1),    3=ksDecay (0–1), 4=ksTune (50–2000 Hz)
+// paramId: 0=stretch (0.5–2.0),  1=freqShift (-200–+200 Hz),
+//          2=foldAmount (0–1),   3=ksDecay (0–1), 4=ksTune (50–2000 Hz),
+//          5=reverbSize (0–1),   6=reverbDamp (0–1)
 //==============================================================================
 float EffectsView::normToRaw(int paramId, float norm) const
 {
     const float n = juce::jlimit(0.0f, 1.0f, norm);
     switch (paramId)
     {
-        case 0: return 0.5f + n * 1.5f;           // stretch  0.5–2.0
-        case 1: return n * 400.0f - 200.0f;        // freqShift -200–+200
-        case 2: return n;                           // phaseRand 0–1
-        case 3: return n;                           // ksDecay   0–1
-        case 4: return 50.0f + n * 1950.0f;        // ksTune   50–2000
+        case 0: return 0.5f + n * 1.5f;           // stretch     0.5–2.0
+        case 1: return n * 400.0f - 200.0f;        // freqShift  -200–+200
+        case 2: return n;                           // foldAmount  0–1
+        case 3: return n;                           // ksDecay     0–1
+        case 4: return 50.0f + n * 1950.0f;        // ksTune     50–2000
+        case 5: return n;                           // reverbSize  0–1
+        case 6: return n;                           // reverbDamp  0–1
         default: return 0.0f;
     }
 }
@@ -104,6 +111,8 @@ float EffectsView::rawToNorm(int paramId, float raw) const
         case 2: return juce::jlimit(0.0f, 1.0f, raw);
         case 3: return juce::jlimit(0.0f, 1.0f, raw);
         case 4: return juce::jlimit(0.0f, 1.0f, (raw - 50.0f) / 1950.0f);
+        case 5: return juce::jlimit(0.0f, 1.0f, raw);
+        case 6: return juce::jlimit(0.0f, 1.0f, raw);
         default: return 0.0f;
     }
 }
@@ -114,9 +123,11 @@ float EffectsView::getRaw(int paramId, int step) const
     {
         case 0: return state.stretchRatio[step].load(std::memory_order_relaxed);
         case 1: return state.freqShift[step]   .load(std::memory_order_relaxed);
-        case 2: return state.phaseRand[step]   .load(std::memory_order_relaxed);
+        case 2: return state.foldAmount[step]  .load(std::memory_order_relaxed);
         case 3: return state.ksDecay[step]     .load(std::memory_order_relaxed);
         case 4: return state.ksTune[step]      .load(std::memory_order_relaxed);
+        case 5: return state.reverbSize[step]  .load(std::memory_order_relaxed);
+        case 6: return state.reverbDamp[step]  .load(std::memory_order_relaxed);
         default: return 0.0f;
     }
 }
@@ -127,9 +138,11 @@ void EffectsView::setRaw(int paramId, int step, float raw)
     {
         case 0: state.stretchRatio[step].store(raw, std::memory_order_relaxed); break;
         case 1: state.freqShift[step]   .store(raw, std::memory_order_relaxed); break;
-        case 2: state.phaseRand[step]   .store(raw, std::memory_order_relaxed); break;
+        case 2: state.foldAmount[step]  .store(raw, std::memory_order_relaxed); break;
         case 3: state.ksDecay[step]     .store(raw, std::memory_order_relaxed); break;
         case 4: state.ksTune[step]      .store(raw, std::memory_order_relaxed); break;
+        case 5: state.reverbSize[step]  .store(raw, std::memory_order_relaxed); break;
+        case 6: state.reverbDamp[step]  .store(raw, std::memory_order_relaxed); break;
         default: break;
     }
 }
@@ -144,9 +157,11 @@ juce::String EffectsView::formatVal(int paramId, float raw) const
             const int hz = int(raw);
             return (hz >= 0 ? "+" : "") + juce::String(hz) + " Hz";
         }
-        case 2: return juce::String(raw, 2);
+        case 2: return juce::String(int(raw * 100.0f)) + "%";
         case 3: return juce::String(raw, 2);
         case 4: return juce::String(int(raw)) + " Hz";
+        case 5: return juce::String(int(raw * 100.0f)) + "%";
+        case 6: return juce::String(raw, 2);
         default: return {};
     }
 }

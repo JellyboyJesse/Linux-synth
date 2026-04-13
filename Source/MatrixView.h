@@ -16,8 +16,7 @@
 //   pitch                      (5×8 mini-note grid)
 //   — harmonics —              (section header)
 //   H1 / H2 / H3 / H4         (drag-to-set amplitude bars)
-//   — morph speed —            (section header)
-//   p1–p4 speed                (drag horizontal slider, 0.1–3.0×)
+//   sub                        (sub-oscillator amplitude bar, rootHz × 0.5)
 //   — envelope —               (section header)
 //   attack                     (drag horizontal slider, 0–1000 ms)
 //   decay                      (drag horizontal slider, 0–2000 ms)
@@ -58,7 +57,7 @@ private:
     //==========================================================================
     // Row types and layout
     //==========================================================================
-    enum class RowType { SectionHeader, Pitch, HarmonicBar,
+    enum class RowType { SectionHeader, Pitch, HarmonicBar, SubOscBar,
                          AttackSlider, DecaySlider, DurationSlider };
 
     struct RowInfo

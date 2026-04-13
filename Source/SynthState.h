@@ -16,7 +16,8 @@ static const char* const NOTE_NAMES[NUM_SEMITONES] = {
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 };
 
-/// Convert semitone index (0=C4 … 11=B4) to frequency in Hz.
+/// Convert semitone index (0=C4 … 11=B4, range extends beyond via root offset)
+/// to frequency in Hz.  MIDI 60 = C4, A4 = 440 Hz.
 inline float semitoneToHz(int semitone)
 {
     const int midi = 60 + semitone;
@@ -30,8 +31,10 @@ inline float semitoneToHz(int semitone)
 // thread.  Every field is std::atomic — no locks required.
 //
 //  UI → audio : stepAmplitudes, stepPitch, stepIsCustom, globalAmplitudes,
-//               stepDuration, stepAttack, stepDecay,
-//               stretchRatio, freqShift, phaseRand, ksDecay, ksTune,
+//               subAmp, stepDuration, stepAttack, stepDecay,
+//               stretchRatio, freqShift, foldAmount,
+//               ksDecay, ksTune, reverbSize, reverbDamp,
+//               globalRootNote, globalScale,
 //               bpm, masterGain, isPlaying
 //  audio → UI : currentPlayStep, liveAmplitudes
 //==============================================================================
@@ -40,7 +43,7 @@ struct SynthSharedState
     // Per-step amplitude targets:  [step][osc]
     std::array<std::array<std::atomic<float>, NUM_OSCILLATORS>, NUM_STEPS> stepAmplitudes;
 
-    // Per-step root pitch: semitone index 0..11
+    // Per-step root pitch: semitone index 0..11 (shifted by globalRootNote in audio)
     std::array<std::atomic<int>,  NUM_STEPS> stepPitch;
 
     // Per-step custom flag (true → use stepAmplitudes, false → use globalAmplitudes)
@@ -49,22 +52,28 @@ struct SynthSharedState
     // Global (inherited) amplitude preset
     std::array<std::atomic<float>, NUM_OSCILLATORS> globalAmplitudes;
 
+    // Per-step sub-oscillator amplitude (one octave below fundamental, 0.0–1.0)
+    std::array<std::atomic<float>, NUM_STEPS> subAmp;
+
     // Per-step beat duration in beats (free float, 0.1–8.0).
-    // Governs both the step clock length and the amplitude ramp duration.
-    // e.g. 1.0 = one quarter-note, 0.5 = eighth-note, 2.0 = half-note.
     std::array<std::atomic<float>, NUM_STEPS> stepDuration;
 
     // Effects chain — per step (morphed on audio thread like amplitudes)
     std::array<std::atomic<float>, NUM_STEPS> stretchRatio; // 0.5–2.0, default 1.0
     std::array<std::atomic<float>, NUM_STEPS> freqShift;    // -200–+200 Hz, default 0.0
-    std::array<std::atomic<float>, NUM_STEPS> phaseRand;    // 0.0–1.0, default 0.0
+    std::array<std::atomic<float>, NUM_STEPS> foldAmount;   // 0.0–1.0, default 0.0
     std::array<std::atomic<float>, NUM_STEPS> ksDecay;      // 0.0–1.0, default 0.0 (bypassed)
     std::array<std::atomic<float>, NUM_STEPS> ksTune;       // 50–2000 Hz, default 220.0
+    std::array<std::atomic<float>, NUM_STEPS> reverbSize;   // 0.0–1.0, default 0.0 (bypassed)
+    std::array<std::atomic<float>, NUM_STEPS> reverbDamp;   // 0.0–1.0, default 0.5
 
     // Per-step envelope: attack 0–1000 ms, decay 0–2000 ms
-    // decay == 0 → no decay (sustained at peak throughout step)
     std::array<std::atomic<float>, NUM_STEPS> stepAttack;
     std::array<std::atomic<float>, NUM_STEPS> stepDecay;
+
+    // Global tuning / scale (UI → audio)
+    std::atomic<int> globalRootNote { 0 };  // 0=C … 11=B
+    std::atomic<int> globalScale    { 0 };  // index into ScaleTable::kScales[]
 
     // Transport
     std::atomic<float> bpm        { 120.0f };
@@ -79,17 +88,19 @@ struct SynthSharedState
     {
         for (int s = 0; s < NUM_STEPS; ++s)
         {
-            // Stagger default pitches within the 8-note grid range
             stepPitch[s]   .store((s * 2) % PITCH_GRID_ROWS, std::memory_order_relaxed);
-            stepIsCustom[s].store(true,                       std::memory_order_relaxed);
-            stepDuration[s]  .store(1.0f,   std::memory_order_relaxed);
-            stretchRatio[s]  .store(1.0f,   std::memory_order_relaxed);
-            freqShift[s]     .store(0.0f,   std::memory_order_relaxed);
-            phaseRand[s]     .store(0.0f,   std::memory_order_relaxed);
-            ksDecay[s]       .store(0.0f,   std::memory_order_relaxed);
-            ksTune[s]        .store(220.0f, std::memory_order_relaxed);
-            stepAttack[s]  .store(0.0f, std::memory_order_relaxed);
-            stepDecay[s]   .store(0.0f, std::memory_order_relaxed);
+            stepIsCustom[s].store(true,   std::memory_order_relaxed);
+            subAmp[s]      .store(0.0f,   std::memory_order_relaxed);
+            stepDuration[s].store(1.0f,   std::memory_order_relaxed);
+            stretchRatio[s].store(1.0f,   std::memory_order_relaxed);
+            freqShift[s]   .store(0.0f,   std::memory_order_relaxed);
+            foldAmount[s]  .store(0.0f,   std::memory_order_relaxed);
+            ksDecay[s]     .store(0.0f,   std::memory_order_relaxed);
+            ksTune[s]      .store(220.0f, std::memory_order_relaxed);
+            reverbSize[s]  .store(0.0f,   std::memory_order_relaxed);
+            reverbDamp[s]  .store(0.5f,   std::memory_order_relaxed);
+            stepAttack[s]  .store(0.0f,   std::memory_order_relaxed);
+            stepDecay[s]   .store(0.0f,   std::memory_order_relaxed);
             for (int o = 0; o < NUM_OSCILLATORS; ++o)
                 stepAmplitudes[s][o].store(o == 0 ? 0.8f : 0.0f, std::memory_order_relaxed);
         }

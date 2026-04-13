@@ -28,6 +28,7 @@ void MatrixView::buildRows()
     push(RowType::HarmonicBar,   "H2",              1, kBarH);
     push(RowType::HarmonicBar,   "H3",              2, kBarH);
     push(RowType::HarmonicBar,   "H4",              3, kBarH);
+    push(RowType::SubOscBar,     "sub",             0, kBarH);
 
     push(RowType::SectionHeader,  "envelope",        0, kSectionH);
     push(RowType::AttackSlider,   "attack",          0, kSliderH);
@@ -96,7 +97,8 @@ float MatrixView::normFromRaw(const RowInfo& row, float raw) const
 {
     switch (row.type)
     {
-        case RowType::HarmonicBar:    return juce::jlimit(0.0f, 1.0f, raw);
+        case RowType::HarmonicBar:
+        case RowType::SubOscBar:      return juce::jlimit(0.0f, 1.0f, raw);
         case RowType::AttackSlider:   return juce::jlimit(0.0f, 1.0f, raw / 1000.0f);
         case RowType::DecaySlider:    return juce::jlimit(0.0f, 1.0f, raw / 2000.0f);
         case RowType::DurationSlider: return juce::jlimit(0.0f, 1.0f, (raw - 0.1f) / 7.9f);
@@ -109,7 +111,8 @@ float MatrixView::rawFromNorm(const RowInfo& row, float norm) const
     const float n = juce::jlimit(0.0f, 1.0f, norm);
     switch (row.type)
     {
-        case RowType::HarmonicBar:    return n;
+        case RowType::HarmonicBar:
+        case RowType::SubOscBar:      return n;
         case RowType::AttackSlider:   return n * 1000.0f;
         case RowType::DecaySlider:    return n * 2000.0f;
         case RowType::DurationSlider: return 0.1f + n * 7.9f;
@@ -122,6 +125,9 @@ float MatrixView::getCellValue(const RowInfo& row, int step) const
     const int osc = row.paramIndex;
     switch (row.type)
     {
+        case RowType::SubOscBar:
+            return normFromRaw(row,
+                state.subAmp[step].load(std::memory_order_relaxed));
         case RowType::HarmonicBar:
             return normFromRaw(row,
                 state.stepAmplitudes[step][osc].load(std::memory_order_relaxed));
@@ -144,6 +150,9 @@ void MatrixView::setCellValue(const RowInfo& row, int step, float normalised)
     const int   osc = row.paramIndex;
     switch (row.type)
     {
+        case RowType::SubOscBar:
+            state.subAmp[step].store(raw, std::memory_order_relaxed);
+            break;
         case RowType::HarmonicBar:
             state.stepAmplitudes[step][osc].store(raw, std::memory_order_relaxed);
             state.stepIsCustom[step].store(true, std::memory_order_relaxed);
@@ -229,7 +238,7 @@ void MatrixView::mouseDrag(const juce::MouseEvent& e)
 
     float newNorm = drag.startValue;
 
-    if (row.type == RowType::HarmonicBar)
+    if (row.type == RowType::HarmonicBar || row.type == RowType::SubOscBar)
     {
         // Vertical drag: up = higher amplitude
         const float delta = float(drag.startY - e.y) / float(juce::jmax(1, row.h));
@@ -267,7 +276,8 @@ void MatrixView::paint(juce::Graphics& g)
         {
             case RowType::SectionHeader:            drawSectionHeader(g, row); break;
             case RowType::Pitch:                    drawPitchRow(g, row);      break;
-            case RowType::HarmonicBar:              drawBarRow(g, row);        break;
+            case RowType::HarmonicBar:
+            case RowType::SubOscBar:                drawBarRow(g, row);        break;
             case RowType::AttackSlider:
             case RowType::DecaySlider:
             case RowType::DurationSlider:           drawSliderRow(g, row);     break;

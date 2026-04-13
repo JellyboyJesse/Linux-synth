@@ -8,8 +8,13 @@
 // Real-time audio callback — no allocations, no locks.
 //
 // Signal flow (per sample):
-//   oscillator sum  →  envelope  →  harmonic stretch + freq shift
-//   →  phase drift  →  Karplus-Strong resonator  →  master gain  →  output
+//   oscillator sum (H1-H4 + sub)
+//   → envelope
+//   → harmonic stretch + freq shift  (applied per-oscillator during synthesis)
+//   → wavefolder
+//   → Karplus-Strong resonator
+//   → FDN reverb (4-channel, stereo out)
+//   → master gain → output
 //
 // All effect parameters are morphed using the same linear ramp duration as
 // the oscillator amplitude ramps (samplesThisStep from stepDuration + BPM).
@@ -36,7 +41,7 @@ private:
     float sampleRate = 44100.0f;
 
     //==========================================================================
-    // Per-oscillator private state
+    // Per-oscillator private state (shared by H1-H4 harmonics and sub osc)
     //==========================================================================
     struct OscPrivate
     {
@@ -48,7 +53,9 @@ private:
         int   rampProgress  = 0;
         int   rampDuration  = 22050;
     };
-    std::array<OscPrivate, NUM_OSCILLATORS> oscs;
+
+    std::array<OscPrivate, NUM_OSCILLATORS> oscs;  // H1-H4
+    OscPrivate subOsc;                              // sub oscillator (rootHz * 0.5)
 
     float currentRootHz = 440.0f; // set at each step trigger; used for per-sample freq calc
 
@@ -90,22 +97,17 @@ private:
         void update(float t) noexcept { current = rampFrom + (rampTo - rampFrom) * t; }
     };
 
-    FxParam fxStretch  { 1.0f   }; // harmonic stretch ratio  0.5–2.0
-    FxParam fxFreqShift{ 0.0f   }; // global freq shift Hz   -200–+200
-    FxParam fxPhaseRand{ 0.0f   }; // phase randomisation     0–1
-    FxParam fxKsDecay  { 0.0f   }; // Karplus-Strong feedback 0–1
-    FxParam fxKsTune   { 220.0f }; // Karplus-Strong tune Hz  50–2000
+    FxParam fxStretch    { 1.0f   }; // harmonic stretch ratio  0.5–2.0
+    FxParam fxFreqShift  { 0.0f   }; // global freq shift Hz   -200–+200
+    FxParam fxFoldAmount { 0.0f   }; // wavefolder fold amount  0–1
+    FxParam fxKsDecay    { 0.0f   }; // Karplus-Strong feedback 0–1
+    FxParam fxKsTune     { 220.0f }; // Karplus-Strong tune Hz  50–2000
+    FxParam fxReverbSize { 0.0f   }; // FDN reverb wet/feedback 0–1
+    FxParam fxReverbDamp { 0.5f   }; // FDN reverb damping      0–1
 
     // Shared ramp counter for all effects (same timing as oscillator ramps)
     int effectRampProgress = 0;
     int effectRampDuration = 22050;
-
-    //==========================================================================
-    // Phase randomisation — continuous per-oscillator LCG drift
-    //==========================================================================
-    std::array<uint32_t, NUM_OSCILLATORS> phaseDriftLcg {
-        { 0x12345678u, 0x9ABCDEF0u, 0x55AA55AAu, 0xFEDCBA98u }
-    };
 
     //==========================================================================
     // Karplus-Strong resonator — pre-allocated, no heap
@@ -113,13 +115,29 @@ private:
     static constexpr int kKsMaxDelay     = 2048;
     static constexpr int kKsCrossfadeLen = 64;
 
-    float ksBuffer[kKsMaxDelay] {};  // zero-initialised
+    float ksBuffer[kKsMaxDelay] {};
     int   ksWritePos        = 0;
     float ksPrevSample      = 0.0f;
     int   ksDelaySamples    = 200;
     int   ksNewDelaySamples = 200;
-    int   ksCrossfadeProg   = kKsCrossfadeLen; // start settled
+    int   ksCrossfadeProg   = kKsCrossfadeLen;
     bool  ksWasActive       = false;
+
+    //==========================================================================
+    // FDN reverb — 4-channel feedback delay network, pre-allocated, no heap
+    //
+    // Delay lengths (prime): 1471, 1699, 1877, 2053 samples
+    // Feedback matrix: Hadamard H4 × 0.5
+    // One-pole lowpass per channel (controlled by reverbDamp)
+    // Stereo output: L = ch0+ch2, R = ch1+ch3
+    //==========================================================================
+    static constexpr int kFdnDelays[4]  = { 1471, 1699, 1877, 2053 };
+    static constexpr int kFdnMaxDelay   = 2054; // > max(kFdnDelays)
+
+    float fdnBuf[4][kFdnMaxDelay] {};   // zero-initialised
+    int   fdnWrite[4]  = { 0, 0, 0, 0 };
+    float fdnFiltSt[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // one-pole state
+    bool  reverbWasActive = false;
 
     //==========================================================================
     // Helper
