@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <memory>
 #include "SynthState.h"
 
 //==============================================================================
@@ -107,19 +108,20 @@ private:
     FxParam fxGranScatter { 0.0f  };  // 0–1
     FxParam fxGranFeedback{ 0.0f  };  // 0–0.95
 
-    FxParam fxReverbSize  { 0.0f  };
+    FxParam fxReverbSize  { 0.3f  };
     FxParam fxReverbDamp  { 0.5f  };
-    FxParam fxShimmerAmt  { 0.0f  };
+    FxParam fxShimmerAmt  { 0.15f };
     FxParam fxShimmerTune { 1.0f  };  // -1–1; 1 = oct up
 
     int effectRampProgress = 0;
     int effectRampDuration = 22050;
 
     //==========================================================================
-    // Granular engine — pre-allocated, no heap
+    // Granular engine — heap-allocated to avoid stack overflow
     //==========================================================================
-    static constexpr int kGranBufSize = 88200; // 2 s at 44100
-    static constexpr int kMaxGrains   = 48;
+    static constexpr int kGranBufSize   = 44100; // 1 s at 44100
+    static constexpr int kMaxGrains     = 16;
+    static constexpr int kMaxActiveGrains = 12;  // CPU guard: skip spawn above this
 
     struct GrainState
     {
@@ -140,7 +142,9 @@ private:
         int        samplesSinceLastGrain  = 0;
         float      prevOutL               = 0.0f;
         float      prevOutR               = 0.0f;
-    } gran;
+    };
+
+    std::unique_ptr<GranularState> gran;
 
     uint32_t granLcg     = 0xDEADBEEFu;
     bool     granWasActive = false;

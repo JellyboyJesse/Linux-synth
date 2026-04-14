@@ -10,7 +10,7 @@ static constexpr float kLogHarm[NUM_OSCILLATORS] = {
 
 //==============================================================================
 AudioEngine::AudioEngine(SynthSharedState& sharedState)
-    : state(sharedState)
+    : state(sharedState), gran(std::make_unique<GranularState>())
 {
     for (int i = 0; i < NUM_OSCILLATORS; ++i)
     {
@@ -89,7 +89,7 @@ void AudioEngine::triggerStep(int step)
         currentChildStep    = 0;
         totalChildSteps     = juce::jlimit(1, NUM_STEPS,
                                   state.childStepCount[step].load(std::memory_order_relaxed));
-        childSamplesPerStep = samplesThisStep / totalChildSteps;
+        childSamplesPerStep = juce::jmax(1, samplesThisStep / totalChildSteps);
         childSampleCounter  = 0;
         // Override pitch with first child step pitch
         const int cPitch = state.childPitch[step][0].load(std::memory_order_relaxed);
@@ -274,8 +274,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
         if (granWasActive && !granActive)
         {
-            for (auto& g : gran.grains) g.active = false;
-            gran.prevOutL = gran.prevOutR = 0.0f;
+            for (auto& g : gran->grains) g.active = false;
+            gran->prevOutL = gran->prevOutR = 0.0f;
         }
         granWasActive = granActive;
 
@@ -284,52 +284,61 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         if (granActive)
         {
             // Write into capture buffer (with feedback)
-            const float prevMono = (gran.prevOutL + gran.prevOutR) * 0.5f;
-            gran.captureBuffer[gran.writeHead] =
+            const float prevMono = (gran->prevOutL + gran->prevOutR) * 0.5f;
+            gran->captureBuffer[gran->writeHead] =
                 sample + fxGranFeedback.current * prevMono;
-            gran.writeHead = (gran.writeHead + 1) % kGranBufSize;
+            gran->writeHead = (gran->writeHead + 1) % kGranBufSize;
 
-            // Grain spawning
-            ++gran.samplesSinceLastGrain;
+            // Grain spawning — skip if too many grains active (CPU guard)
+            ++gran->samplesSinceLastGrain;
             const int grainInterval = juce::jmax(1,
                 int(sampleRate / juce::jmax(0.001f, fxGranDensity.current)));
 
-            if (gran.samplesSinceLastGrain >= grainInterval)
+            if (gran->samplesSinceLastGrain >= grainInterval)
             {
-                gran.samplesSinceLastGrain = 0;
-                for (auto& g : gran.grains)
+                gran->samplesSinceLastGrain = 0;
+
+                // Count active grains before spawning
+                int activeCount = 0;
+                for (const auto& g : gran->grains)
+                    if (g.active) ++activeCount;
+
+                if (activeCount < kMaxActiveGrains)
                 {
-                    if (g.active) continue;
-                    const int sizeSamps = juce::jlimit(
-                        int(0.01f  * sampleRate),
-                        int(0.5f   * sampleRate),
-                        int(fxGranSize.current * 0.001f * sampleRate));
-                    g.size = sizeSamps;
-                    g.age  = 0;
-                    int rh = gran.writeHead - sizeSamps;
-                    if (rh < 0) rh += kGranBufSize;
-                    g.readHead = float(rh);
+                    for (auto& g : gran->grains)
+                    {
+                        if (g.active) continue;
+                        const int sizeSamps = juce::jlimit(
+                            int(0.01f  * sampleRate),
+                            int(0.5f   * sampleRate),
+                            int(fxGranSize.current * 0.001f * sampleRate));
+                        g.size = sizeSamps;
+                        g.age  = 0;
+                        int rh = gran->writeHead - sizeSamps;
+                        if (rh < 0) rh += kGranBufSize;
+                        g.readHead = float(rh);
 
-                    // Random pitch scatter
-                    granLcg = granLcg * 1664525u + 1013904223u;
-                    const float r = float(granLcg >> 8) / float(1u << 24);
-                    g.pitchRatio = std::pow(2.0f,
-                        fxGranScatter.current * (r - 0.5f));
+                        // Random pitch scatter
+                        granLcg = granLcg * 1664525u + 1013904223u;
+                        const float r = float(granLcg >> 8) / float(1u << 24);
+                        g.pitchRatio = std::pow(2.0f,
+                            fxGranScatter.current * (r - 0.5f));
 
-                    // Random pan
-                    granLcg = granLcg * 1664525u + 1013904223u;
-                    const float pan = float(granLcg >> 8) / float(1u << 24);
-                    g.panL = std::cos(pan * kPi * 0.5f);
-                    g.panR = std::sin(pan * kPi * 0.5f);
+                        // Random pan
+                        granLcg = granLcg * 1664525u + 1013904223u;
+                        const float pan = float(granLcg >> 8) / float(1u << 24);
+                        g.panL = std::cos(pan * kPi * 0.5f);
+                        g.panR = std::sin(pan * kPi * 0.5f);
 
-                    g.active = true;
-                    break;
+                        g.active = true;
+                        break;
+                    }
                 }
             }
 
             // Process active grains
             float outL = 0.0f, outR = 0.0f;
-            for (auto& g : gran.grains)
+            for (auto& g : gran->grains)
             {
                 if (!g.active) continue;
                 const float phase = float(g.age) / float(g.size);
@@ -338,8 +347,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 const int   pos0  = int(g.readHead) % kGranBufSize;
                 const int   pos1  = (pos0 + 1) % kGranBufSize;
                 const float frac  = g.readHead - float(int(g.readHead));
-                const float s = gran.captureBuffer[pos0] * (1.0f - frac)
-                              + gran.captureBuffer[pos1] * frac;
+                const float s = gran->captureBuffer[pos0] * (1.0f - frac)
+                              + gran->captureBuffer[pos1] * frac;
 
                 outL += s * env * g.panL;
                 outR += s * env * g.panR;
@@ -351,8 +360,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
                 if (++g.age >= g.size) g.active = false;
             }
 
-            gran.prevOutL = outL;
-            gran.prevOutR = outR;
+            gran->prevOutL = outL;
+            gran->prevOutR = outR;
             const float mix = fxGranMix.current;
             granL = sample * (1.0f - mix) + outL * mix;
             granR = sample * (1.0f - mix) + outR * mix;

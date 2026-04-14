@@ -82,8 +82,8 @@ struct SynthSharedState
             stepIsCustom[s].store(true,   std::memory_order_relaxed);
             subAmp[s]      .store(0.0f,   std::memory_order_relaxed);
             stepDuration[s].store(1.0f,   std::memory_order_relaxed);
-            stepAttack[s]  .store(0.0f,   std::memory_order_relaxed);
-            stepDecay[s]   .store(0.0f,   std::memory_order_relaxed);
+            stepAttack[s]  .store(10.0f,  std::memory_order_relaxed);  // 10 ms
+            stepDecay[s]   .store(500.0f, std::memory_order_relaxed);  // 500 ms
 
             stretchRatio[s].store(1.0f,   std::memory_order_relaxed);
             freqShift[s]   .store(0.0f,   std::memory_order_relaxed);
@@ -95,9 +95,9 @@ struct SynthSharedState
             granularPitchScatter[s].store(0.0f,  std::memory_order_relaxed);
             granularFeedback[s]    .store(0.0f,  std::memory_order_relaxed);
 
-            reverbSize[s]   .store(0.0f,  std::memory_order_relaxed);
+            reverbSize[s]   .store(0.3f,  std::memory_order_relaxed);
             reverbDamp[s]   .store(0.5f,  std::memory_order_relaxed);
-            shimmerAmount[s].store(0.0f,  std::memory_order_relaxed);
+            shimmerAmount[s].store(0.15f, std::memory_order_relaxed);
             shimmerTune[s]  .store(1.0f,  std::memory_order_relaxed);
 
             childEnabled[s]  .store(false, std::memory_order_relaxed);
