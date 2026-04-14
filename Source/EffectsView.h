@@ -8,18 +8,13 @@
 //
 // Effects-chain matrix — same column-per-step layout as MatrixView.
 // Rows (top → bottom):
-//   — harmonic stretch —
-//   stretch ratio    (0.5 – 2.0,   drag horizontal)   paramId 0
-//   — frequency shift —
-//   freq shift       (-200–+200 Hz, drag horizontal)   paramId 1
-//   — waveshaping —
-//   fold amount      (0.0 – 1.0,   drag horizontal)   paramId 2
-//   — karplus-strong —
-//   ks decay         (0.0 – 1.0,   drag horizontal)   paramId 3
-//   ks tune          (50 – 2000 Hz, drag horizontal)   paramId 4
-//   — reverb —
-//   reverb size      (0.0 – 1.0,   drag horizontal)   paramId 5
-//   reverb damp      (0.0 – 1.0,   drag horizontal)   paramId 6
+//   — harmonic stretch —  stretch ratio                         paramId 0
+//   — frequency shift —   freq shift                            paramId 1
+//   — waveshaping —       fold amount                           paramId 2
+//   — granular —          mix, grain size, density,
+//                         pitch scatter, feedback               paramId 3–7
+//   — shimmer reverb —    reverb size, reverb damp,
+//                         shimmer amount, shimmer tune          paramId 8–11
 //
 // Writes directly to SynthSharedState atomics; the audio engine morphs these
 // using the same stepDuration ramp as harmonic amplitudes.
@@ -52,7 +47,7 @@ private:
     {
         RowType      type;
         juce::String label;
-        int          paramId; // see header comment for mapping (0-6)
+        int          paramId; // see header comment for mapping (0–11)
         int          y, h;
     };
 

@@ -1,5 +1,6 @@
 #include "MatrixView.h"
 #include "WireframeLookAndFeel.h"
+#include "ScaleTable.h"
 
 //==============================================================================
 MatrixView::MatrixView(SynthSharedState& sharedState)
@@ -22,6 +23,8 @@ void MatrixView::buildRows()
 
     push(RowType::SectionHeader, "pitch sequencer", 0, kSectionH);
     push(RowType::Pitch,         "pitch",           0, kPitchH);
+    push(RowType::SectionHeader, "child steps",     0, kSectionH);
+    push(RowType::ChildPitch,    "child",           0, kChildPitchH);
 
     push(RowType::SectionHeader, "harmonics",       0, kSectionH);
     push(RowType::HarmonicBar,   "H1",              0, kBarH);
@@ -102,7 +105,7 @@ float MatrixView::normFromRaw(const RowInfo& row, float raw) const
         case RowType::AttackSlider:   return juce::jlimit(0.0f, 1.0f, raw / 1000.0f);
         case RowType::DecaySlider:    return juce::jlimit(0.0f, 1.0f, raw / 2000.0f);
         case RowType::DurationSlider: return juce::jlimit(0.0f, 1.0f, (raw - 0.1f) / 7.9f);
-        default: return 0.0f;
+        default: return 0.0f;  // ChildPitch not drag-controlled
     }
 }
 
@@ -179,9 +182,21 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
 
     const int col = colFromX(e.x);
 
-    // Click on column header (not in label area)
+    // Expand toggle in column header (top-right corner of each step header)
     if (e.y < kColHeaderH && col >= 0)
     {
+        const int toggleX = colX(col) + colW() - kToggleSize - 2;
+        const int toggleY = (kColHeaderH - kToggleSize) / 2;
+        if (e.x >= toggleX && e.x < toggleX + kToggleSize
+            && e.y >= toggleY && e.y < toggleY + kToggleSize)
+        {
+            columnExpanded[size_t(col)] = !columnExpanded[size_t(col)];
+            if (!columnExpanded[size_t(col)])
+                state.childEnabled[col].store(false, std::memory_order_relaxed);
+            repaint();
+            return;
+        }
+
         selectedCol = col;
         if (onStepSelected) onStepSelected(col);
         repaint();
@@ -207,7 +222,7 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
     selectedRowIndex = ri;
     if (onStepSelected) onStepSelected(col);
 
-    if (row.type == RowType::SectionHeader)
+    if (row.type == RowType::SectionHeader || row.type == RowType::ChildPitch)
     {
         repaint();
         return;
@@ -218,6 +233,48 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
         const int semi = pitchSemitoneFromY(row.y, row.h, e.y);
         state.stepPitch[col].store(semi, std::memory_order_relaxed);
         repaint();
+        return;
+    }
+
+    if (row.type == RowType::ChildPitch)
+    {
+        if (!columnExpanded[size_t(col)]) { repaint(); return; }
+
+        const int cw = colW();
+        const int cx = colX(col);
+
+        // Step count selector (top kChildCountH px of the cell)
+        if (e.y >= row.y && e.y < row.y + kChildCountH)
+        {
+            const int cur = state.childStepCount[col].load(std::memory_order_relaxed);
+            state.childStepCount[col].store((cur % NUM_STEPS) + 1, std::memory_order_relaxed);
+            repaint();
+            return;
+        }
+
+        // Child pitch mini-grid
+        const int gridY = row.y + kChildCountH + 2;
+        const int gridH = row.h - kChildCountH - 4;
+        const int stepCount = juce::jlimit(1, NUM_STEPS,
+            state.childStepCount[col].load(std::memory_order_relaxed));
+        const int childCellW = cw / stepCount;
+
+        if (e.x >= cx && e.x < cx + cw && e.y >= gridY && e.y < gridY + gridH)
+        {
+            const int cs = (e.x - cx) / juce::jmax(1, childCellW);
+            if (cs >= 0 && cs < stepCount)
+            {
+                const int miniH = gridH / kPitchRows;
+                const int mrow  = (e.y - gridY) / juce::jmax(1, miniH);
+                const int semi  = (kPitchRows - 1) - mrow;
+                if (semi >= 0 && semi < kPitchRows)
+                {
+                    state.childPitch[col][cs].store(semi, std::memory_order_relaxed);
+                    state.childEnabled[col] .store(true,  std::memory_order_relaxed);
+                    repaint();
+                }
+            }
+        }
         return;
     }
 
@@ -274,13 +331,14 @@ void MatrixView::paint(juce::Graphics& g)
         const RowInfo& row = rows[size_t(i)];
         switch (row.type)
         {
-            case RowType::SectionHeader:            drawSectionHeader(g, row); break;
-            case RowType::Pitch:                    drawPitchRow(g, row);      break;
+            case RowType::SectionHeader:            drawSectionHeader(g, row);  break;
+            case RowType::Pitch:                    drawPitchRow(g, row);       break;
+            case RowType::ChildPitch:               drawChildPitchRow(g, row);  break;
             case RowType::HarmonicBar:
-            case RowType::SubOscBar:                drawBarRow(g, row);        break;
+            case RowType::SubOscBar:                drawBarRow(g, row);         break;
             case RowType::AttackSlider:
             case RowType::DecaySlider:
-            case RowType::DurationSlider:           drawSliderRow(g, row);     break;
+            case RowType::DurationSlider:           drawSliderRow(g, row);      break;
         }
     }
 }
@@ -312,9 +370,24 @@ void MatrixView::drawColumnHeaders(juce::Graphics& g) const
         g.setColour(isPlay ? Palette::accent() : Palette::outline());
         g.drawRoundedRectangle(hb, cornerR, 1.5f);
 
+        // Shift label left to make room for toggle
+        const auto labelR = hb.withTrimmedRight(float(kToggleSize + 2));
         g.setColour(isPlay ? Palette::background() : Palette::text());
         g.drawFittedText("Step " + juce::String(col + 1),
-                         hb.toNearestInt(), juce::Justification::centred, 1);
+                         labelR.toNearestInt(), juce::Justification::centred, 1);
+
+        // +/- expand toggle
+        const bool expanded = columnExpanded[size_t(col)];
+        const auto toggleR = juce::Rectangle<float>(
+            hb.getRight() - float(kToggleSize),
+            hb.getCentreY() - float(kToggleSize) * 0.5f,
+            float(kToggleSize), float(kToggleSize));
+        g.setColour(expanded ? Palette::accent()
+                             : Palette::dimOutline().withAlpha(0.6f));
+        g.drawRoundedRectangle(toggleR, 2.0f, 1.0f);
+        g.setFont(juce::Font(9.0f));
+        g.drawFittedText(expanded ? "-" : "+",
+                         toggleR.toNearestInt(), juce::Justification::centred, 1);
     }
 
     // Separator line
@@ -498,6 +571,107 @@ void MatrixView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
         g.setFont(juce::Font(9.0f));
         g.drawFittedText(valStr, trackR.toNearestInt(),
                          juce::Justification::centred, 1);
+    }
+
+    // Row separator
+    g.setColour(Palette::dimOutline().withAlpha(0.2f));
+    g.drawHorizontalLine(r.y + r.h - 1, float(kLabelW), float(getWidth()));
+}
+
+//==============================================================================
+void MatrixView::drawChildPitchRow(juce::Graphics& g, const RowInfo& r) const
+{
+    // Row label
+    g.setColour(Palette::dimOutline());
+    g.setFont(juce::Font(9.0f));
+    g.drawFittedText("child",
+                     juce::Rectangle<int>(0, r.y, kLabelW - 4, r.h),
+                     juce::Justification::centredRight, 1);
+
+    const int cw = colW();
+    const int rootNote = state.globalRootNote.load(std::memory_order_relaxed);
+    const int scaleIdx = state.globalScale   .load(std::memory_order_relaxed);
+
+    for (int col = 0; col < NUM_STEPS; ++col)
+    {
+        const int cx = colX(col);
+
+        if (!columnExpanded[size_t(col)])
+        {
+            // Collapsed: show a faint "+" hint centred in the cell
+            g.setColour(Palette::dimOutline().withAlpha(0.2f));
+            g.setFont(juce::Font(10.0f));
+            g.drawFittedText("+", juce::Rectangle<int>(cx, r.y, cw, r.h),
+                             juce::Justification::centred, 1);
+            continue;
+        }
+
+        // ---- Expanded: step-count selector ----------------------------------
+        const int stepCount = juce::jlimit(1, NUM_STEPS,
+            state.childStepCount[col].load(std::memory_order_relaxed));
+        const bool childOn = state.childEnabled[col].load(std::memory_order_relaxed);
+
+        const auto countR = juce::Rectangle<int>(cx + 2, r.y + 2, cw - 4, kChildCountH - 2);
+        g.setColour(childOn ? Palette::accent().withAlpha(0.25f)
+                            : Palette::dimOutline().withAlpha(0.15f));
+        g.fillRoundedRectangle(countR.toFloat(), 2.0f);
+        g.setColour(childOn ? Palette::accent() : Palette::dimOutline());
+        g.drawRoundedRectangle(countR.toFloat(), 2.0f, 0.75f);
+        g.setFont(juce::Font(9.0f));
+        g.drawFittedText(juce::String(stepCount) + " steps",
+                         countR, juce::Justification::centred, 1);
+
+        // ---- Child pitch mini-grid ------------------------------------------
+        const int gridY    = r.y + kChildCountH + 2;
+        const int gridH    = r.h - kChildCountH - 4;
+        const int cellW    = cw / stepCount;
+        const int miniH    = gridH / kPitchRows;
+        const float cornerR = 2.0f;
+
+        for (int cs = 0; cs < stepCount; ++cs)
+        {
+            const int childPitch = state.childPitch[col][cs].load(std::memory_order_relaxed);
+            const int ccx = cx + cs * cellW;
+
+            for (int mrow = 0; mrow < kPitchRows; ++mrow)
+            {
+                // mrow 0 = top = semitone (kPitchRows-1), mrow (kPitchRows-1) = semitone 0
+                const int semi     = (kPitchRows - 1) - mrow;
+                const bool isActive = (semi == childPitch);
+
+                // Scale membership for dimming non-scale tones
+                const bool inScale = ScaleTable::isInScale(
+                    (semi + rootNote) % 12, scaleIdx, rootNote % 12);
+
+                const auto cell = juce::Rectangle<float>(
+                    float(ccx) + 1.5f,
+                    float(gridY) + float(mrow * miniH) + 0.5f,
+                    float(cellW) - 3.0f,
+                    float(miniH) - 1.0f);
+
+                // Fill active note
+                if (isActive)
+                {
+                    g.setColour(Palette::accent().withAlpha(childOn ? 0.85f : 0.55f));
+                    g.fillRoundedRectangle(cell, cornerR);
+                }
+
+                // Outline — in-scale notes brighter
+                const float outlineAlpha = isActive ? 1.0f
+                                         : inScale  ? 0.35f
+                                                    : 0.15f;
+                g.setColour(isActive ? Palette::accent()
+                                     : Palette::dimOutline().withAlpha(outlineAlpha));
+                g.drawRoundedRectangle(cell, cornerR, isActive ? 1.0f : 0.5f);
+            }
+
+            // Vertical divider between child steps
+            if (cs > 0)
+            {
+                g.setColour(Palette::dimOutline().withAlpha(0.25f));
+                g.drawVerticalLine(ccx, float(gridY), float(gridY + gridH));
+            }
+        }
     }
 
     // Row separator

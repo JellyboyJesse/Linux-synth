@@ -3,21 +3,16 @@
 #include "SynthState.h"
 
 //==============================================================================
-// AudioEngine
-//
-// Real-time audio callback — no allocations, no locks.
+// AudioEngine — real-time audio callback, no allocations, no locks.
 //
 // Signal flow (per sample):
-//   oscillator sum (H1-H4 + sub)
+//   Oscillator sum (H1–H4 + sub)
 //   → envelope
-//   → harmonic stretch + freq shift  (applied per-oscillator during synthesis)
+//   → harmonic stretch + freq shift  (per-oscillator, during synthesis)
 //   → wavefolder
-//   → Karplus-Strong resonator
-//   → FDN reverb (4-channel, stereo out)
-//   → master gain → output
-//
-// All effect parameters are morphed using the same linear ramp duration as
-// the oscillator amplitude ramps (samplesThisStep from stepDuration + BPM).
+//   → granular engine
+//   → shimmer reverb (FDN + pitch-shifted feedback)
+//   → master gain → stereo output
 //==============================================================================
 class AudioEngine : public juce::AudioIODeviceCallback
 {
@@ -41,7 +36,7 @@ private:
     float sampleRate = 44100.0f;
 
     //==========================================================================
-    // Per-oscillator private state (shared by H1-H4 harmonics and sub osc)
+    // Per-oscillator state
     //==========================================================================
     struct OscPrivate
     {
@@ -54,10 +49,9 @@ private:
         int   rampDuration  = 22050;
     };
 
-    std::array<OscPrivate, NUM_OSCILLATORS> oscs;  // H1-H4
-    OscPrivate subOsc;                              // sub oscillator (rootHz * 0.5)
-
-    float currentRootHz = 440.0f; // set at each step trigger; used for per-sample freq calc
+    std::array<OscPrivate, NUM_OSCILLATORS> oscs;
+    OscPrivate subOsc;
+    float currentRootHz = 440.0f;
 
     //==========================================================================
     // Sequencer clock
@@ -66,6 +60,14 @@ private:
     int  sampleCounter   = 0;
     int  samplesThisStep = 22050;
     bool wasPlaying      = false;
+
+    // Child step sub-clock
+    bool childMode           = false;
+    int  currentParentStep   = 0;
+    int  currentChildStep    = 0;
+    int  totalChildSteps     = 1;
+    int  childSamplesPerStep = 22050;
+    int  childSampleCounter  = 0;
 
     //==========================================================================
     // Amplitude envelope
@@ -85,64 +87,93 @@ private:
     }
 
     //==========================================================================
-    // Effects chain — morph state (audio thread only)
+    // Effects morphing — FxParam (audio thread only)
     //==========================================================================
     struct FxParam
     {
-        float current;
-        float rampFrom;
-        float rampTo;
+        float current, rampFrom, rampTo;
         explicit FxParam(float def) noexcept : current(def), rampFrom(def), rampTo(def) {}
-        void trigger(float target) noexcept { rampFrom = current; rampTo = target; }
-        void update(float t) noexcept { current = rampFrom + (rampTo - rampFrom) * t; }
+        void trigger(float t) noexcept { rampFrom = current; rampTo = t; }
+        void update(float t)  noexcept { current = rampFrom + (rampTo - rampFrom) * t; }
     };
 
-    FxParam fxStretch    { 1.0f   }; // harmonic stretch ratio  0.5–2.0
-    FxParam fxFreqShift  { 0.0f   }; // global freq shift Hz   -200–+200
-    FxParam fxFoldAmount { 0.0f   }; // wavefolder fold amount  0–1
-    FxParam fxKsDecay    { 0.0f   }; // Karplus-Strong feedback 0–1
-    FxParam fxKsTune     { 220.0f }; // Karplus-Strong tune Hz  50–2000
-    FxParam fxReverbSize { 0.0f   }; // FDN reverb wet/feedback 0–1
-    FxParam fxReverbDamp { 0.5f   }; // FDN reverb damping      0–1
+    FxParam fxStretch    { 1.0f   };
+    FxParam fxFreqShift  { 0.0f   };
+    FxParam fxFoldAmount { 0.0f   };
 
-    // Shared ramp counter for all effects (same timing as oscillator ramps)
+    FxParam fxGranMix     { 0.0f  };
+    FxParam fxGranSize    { 80.0f };  // ms
+    FxParam fxGranDensity { 8.0f  };  // grains/s
+    FxParam fxGranScatter { 0.0f  };  // 0–1
+    FxParam fxGranFeedback{ 0.0f  };  // 0–0.95
+
+    FxParam fxReverbSize  { 0.0f  };
+    FxParam fxReverbDamp  { 0.5f  };
+    FxParam fxShimmerAmt  { 0.0f  };
+    FxParam fxShimmerTune { 1.0f  };  // -1–1; 1 = oct up
+
     int effectRampProgress = 0;
     int effectRampDuration = 22050;
 
     //==========================================================================
-    // Karplus-Strong resonator — pre-allocated, no heap
+    // Granular engine — pre-allocated, no heap
     //==========================================================================
-    static constexpr int kKsMaxDelay     = 2048;
-    static constexpr int kKsCrossfadeLen = 64;
+    static constexpr int kGranBufSize = 88200; // 2 s at 44100
+    static constexpr int kMaxGrains   = 48;
 
-    float ksBuffer[kKsMaxDelay] {};
-    int   ksWritePos        = 0;
-    float ksPrevSample      = 0.0f;
-    int   ksDelaySamples    = 200;
-    int   ksNewDelaySamples = 200;
-    int   ksCrossfadeProg   = kKsCrossfadeLen;
-    bool  ksWasActive       = false;
+    struct GrainState
+    {
+        bool  active    = false;
+        float readHead  = 0.0f;
+        float pitchRatio= 1.0f;
+        int   size      = 4410;
+        int   age       = 0;
+        float panL      = 1.0f;
+        float panR      = 0.0f;
+    };
+
+    struct GranularState
+    {
+        float      captureBuffer[kGranBufSize] {};
+        int        writeHead              = 0;
+        GrainState grains[kMaxGrains]     {};
+        int        samplesSinceLastGrain  = 0;
+        float      prevOutL               = 0.0f;
+        float      prevOutR               = 0.0f;
+    } gran;
+
+    uint32_t granLcg     = 0xDEADBEEFu;
+    bool     granWasActive = false;
 
     //==========================================================================
-    // FDN reverb — 4-channel feedback delay network, pre-allocated, no heap
+    // FDN shimmer reverb — pre-allocated, no heap
     //
-    // Delay lengths (prime): 1471, 1699, 1877, 2053 samples
-    // Feedback matrix: Hadamard H4 × 0.5
-    // One-pole lowpass per channel (controlled by reverbDamp)
-    // Stereo output: L = ch0+ch2, R = ch1+ch3
+    // 4-channel FDN: prime delays 1471/1699/1877/2053
+    // Hadamard H4 × 0.5 feedback matrix, one-pole lowpass per channel
+    // Pitch shifter in feedback path: 512-sample circular buffer,
+    //   two Hann-windowed read pointers at rate pow(2, shimmerTune)
+    // Stereo out: ch0+ch2 → L, ch1+ch3 → R
     //==========================================================================
-    static constexpr int kFdnDelays[4]  = { 1471, 1699, 1877, 2053 };
-    static constexpr int kFdnMaxDelay   = 2054; // > max(kFdnDelays)
+    static constexpr int kFdnDelays[4]   = { 1471, 1699, 1877, 2053 };
+    static constexpr int kFdnMaxDelay    = 2054;
+    static constexpr int kShimmerBufSize = 512;
 
-    float fdnBuf[4][kFdnMaxDelay] {};   // zero-initialised
-    int   fdnWrite[4]  = { 0, 0, 0, 0 };
-    float fdnFiltSt[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // one-pole state
+    float fdnBuf[4][kFdnMaxDelay]   {};
+    int   fdnWrite[4]               = { 0, 0, 0, 0 };
+    float fdnFiltSt[4]              = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    float shimmerBuf[kShimmerBufSize] {};
+    int   shimmerWritePos             = 0;
+    float shimmerReadA                = 0.0f;
+    float shimmerReadB                = float(kShimmerBufSize / 2);
+
     bool  reverbWasActive = false;
 
     //==========================================================================
-    // Helper
+    // Helpers
     //==========================================================================
     void triggerStep(int step);
+    void triggerChildPitch(int parentStep, int childIdx);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };

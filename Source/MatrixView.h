@@ -58,7 +58,7 @@ private:
     // Row types and layout
     //==========================================================================
     enum class RowType { SectionHeader, Pitch, HarmonicBar, SubOscBar,
-                         AttackSlider, DecaySlider, DurationSlider };
+                         AttackSlider, DecaySlider, DurationSlider, ChildPitch };
 
     struct RowInfo
     {
@@ -75,13 +75,16 @@ private:
     //==========================================================================
     // Layout constants
     //==========================================================================
-    static constexpr int kLabelW      = 80;
-    static constexpr int kColHeaderH  = 30;
-    static constexpr int kSectionH    = 20;
-    static constexpr int kPitchH      = 96;  // 8 mini rows × 12 px
-    static constexpr int kBarH        = 40;
-    static constexpr int kSliderH     = 30;
-    static constexpr int kMiniNoteH   = 12;  // height of one pitch mini-row
+    static constexpr int kLabelW        = 80;
+    static constexpr int kColHeaderH    = 30;
+    static constexpr int kSectionH      = 20;
+    static constexpr int kPitchH        = 96;  // 8 mini rows × 12 px
+    static constexpr int kBarH          = 40;
+    static constexpr int kSliderH       = 30;
+    static constexpr int kMiniNoteH     = 12;  // height of one pitch mini-row
+    static constexpr int kChildPitchH   = 78;  // child step count (16px) + mini-grid (56px) + padding
+    static constexpr int kChildCountH   = 16;  // step-count selector at top of child row
+    static constexpr int kToggleSize    = 14;  // +/- expand toggle in column header
 
     // 8-note chromatic pitch grid (semitones 0–7, bottom=0=C4, top=7=G4)
     static constexpr int kPitchRows   = PITCH_GRID_ROWS; // == 8
@@ -113,6 +116,7 @@ private:
     void drawPitchRow     (juce::Graphics& g, const RowInfo& r) const;
     void drawBarRow       (juce::Graphics& g, const RowInfo& r) const;
     void drawSliderRow    (juce::Graphics& g, const RowInfo& r) const;
+    void drawChildPitchRow(juce::Graphics& g, const RowInfo& r) const;
 
     //==========================================================================
     // Selection state
@@ -120,6 +124,9 @@ private:
     int selectedRowIndex  = -1;  // index into rows[]
     int selectedCol       = -1;  // 0-4
     int currentPlayStep   = -1;
+
+    // Per-column expand state for child step UI (local UI only, not in SynthState)
+    std::array<bool, NUM_STEPS> columnExpanded {};
 
     //==========================================================================
     // Drag state
