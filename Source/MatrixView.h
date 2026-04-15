@@ -84,7 +84,8 @@ private:
     static constexpr int kMiniNoteH     = 12;  // height of one pitch mini-row
     static constexpr int kChildPitchH   = 78;  // child step count (16px) + mini-grid (56px) + padding
     static constexpr int kChildCountH   = 16;  // step-count selector at top of child row
-    static constexpr int kToggleSize    = 14;  // +/- expand toggle in column header
+    static constexpr int kToggleSize    = 14;  // +/- expand toggle visual size
+    static constexpr int kToggleHitSize = 20;  // +/- expand toggle click area
 
     // 8-note chromatic pitch grid (semitones 0–7, bottom=0=C4, top=7=G4)
     static constexpr int kPitchRows   = PITCH_GRID_ROWS; // == 8

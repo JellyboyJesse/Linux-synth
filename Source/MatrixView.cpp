@@ -182,17 +182,21 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
 
     const int col = colFromX(e.x);
 
-    // Expand toggle in column header (top-right corner of each step header)
+    // Expand toggle in column header — 20×20 hit area centred on the visual toggle
     if (e.y < kColHeaderH && col >= 0)
     {
-        const int toggleX = colX(col) + colW() - kToggleSize - 2;
-        const int toggleY = (kColHeaderH - kToggleSize) / 2;
-        if (e.x >= toggleX && e.x < toggleX + kToggleSize
-            && e.y >= toggleY && e.y < toggleY + kToggleSize)
+        // Centre of the visual toggle (matches drawColumnHeaders)
+        const int hbRight  = colX(col) + colW() - 2;   // hb.getRight()
+        const int toggleCX = hbRight - kToggleSize / 2;
+        const int toggleCY = kColHeaderH / 2;
+        const int half     = kToggleHitSize / 2;
+        if (e.x >= toggleCX - half && e.x < toggleCX + half
+            && e.y >= toggleCY - half && e.y < toggleCY + half)
         {
             columnExpanded[size_t(col)] = !columnExpanded[size_t(col)];
             if (!columnExpanded[size_t(col)])
                 state.childEnabled[col].store(false, std::memory_order_relaxed);
+            resized();
             repaint();
             return;
         }
@@ -222,7 +226,7 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
     selectedRowIndex = ri;
     if (onStepSelected) onStepSelected(col);
 
-    if (row.type == RowType::SectionHeader || row.type == RowType::ChildPitch)
+    if (row.type == RowType::SectionHeader)
     {
         repaint();
         return;
@@ -243,37 +247,38 @@ void MatrixView::mouseDown(const juce::MouseEvent& e)
         const int cw = colW();
         const int cx = colX(col);
 
-        // Step count selector (top kChildCountH px of the cell)
+        // Step count +/- strip (top kChildCountH px of the cell)
         if (e.y >= row.y && e.y < row.y + kChildCountH)
         {
-            const int cur = state.childStepCount[col].load(std::memory_order_relaxed);
-            state.childStepCount[col].store((cur % NUM_STEPS) + 1, std::memory_order_relaxed);
+            const int cur  = state.childStepCount[col].load(std::memory_order_relaxed);
+            const int btnW = juce::jmax(1, cw / 3);
+            const int localX = e.x - cx;
+            if (localX < btnW)
+                state.childStepCount[col].store(juce::jmax(1, cur - 1),
+                                                std::memory_order_relaxed);
+            else if (localX >= cw - btnW)
+                state.childStepCount[col].store(juce::jmin(NUM_STEPS, cur + 1),
+                                                std::memory_order_relaxed);
             repaint();
             return;
         }
 
-        // Child pitch mini-grid
-        const int gridY = row.y + kChildCountH + 2;
-        const int gridH = row.h - kChildCountH - 4;
+        // Child pitch mini-grid (below the step-count strip)
+        const int gridY     = row.y + kChildCountH + 2;
+        const int gridH     = row.h - kChildCountH - 4;
         const int stepCount = juce::jlimit(1, NUM_STEPS,
             state.childStepCount[col].load(std::memory_order_relaxed));
-        const int childCellW = cw / stepCount;
+        const int childCellW = juce::jmax(1, cw / stepCount);
 
         if (e.x >= cx && e.x < cx + cw && e.y >= gridY && e.y < gridY + gridH)
         {
-            const int cs = (e.x - cx) / juce::jmax(1, childCellW);
-            if (cs >= 0 && cs < stepCount)
-            {
-                const int miniH = gridH / kPitchRows;
-                const int mrow  = (e.y - gridY) / juce::jmax(1, miniH);
-                const int semi  = (kPitchRows - 1) - mrow;
-                if (semi >= 0 && semi < kPitchRows)
-                {
-                    state.childPitch[col][cs].store(semi, std::memory_order_relaxed);
-                    state.childEnabled[col] .store(true,  std::memory_order_relaxed);
-                    repaint();
-                }
-            }
+            const int cs = juce::jlimit(0, stepCount - 1, (e.x - cx) / childCellW);
+            const int miniH = juce::jmax(1, gridH / kPitchRows);
+            const int mrow  = juce::jlimit(0, kPitchRows - 1, (e.y - gridY) / miniH);
+            const int semi  = (kPitchRows - 1) - mrow;
+            state.childPitch[col][cs].store(semi, std::memory_order_relaxed);
+            state.childEnabled[col] .store(true,  std::memory_order_relaxed);
+            repaint();
         }
         return;
     }
@@ -606,26 +611,51 @@ void MatrixView::drawChildPitchRow(juce::Graphics& g, const RowInfo& r) const
             continue;
         }
 
-        // ---- Expanded: step-count selector ----------------------------------
+        // ---- Expanded: step-count selector with -/+ buttons ----------------
         const int stepCount = juce::jlimit(1, NUM_STEPS,
             state.childStepCount[col].load(std::memory_order_relaxed));
         const bool childOn = state.childEnabled[col].load(std::memory_order_relaxed);
 
-        const auto countR = juce::Rectangle<int>(cx + 2, r.y + 2, cw - 4, kChildCountH - 2);
-        g.setColour(childOn ? Palette::accent().withAlpha(0.25f)
-                            : Palette::dimOutline().withAlpha(0.15f));
-        g.fillRoundedRectangle(countR.toFloat(), 2.0f);
-        g.setColour(childOn ? Palette::accent() : Palette::dimOutline());
-        g.drawRoundedRectangle(countR.toFloat(), 2.0f, 0.75f);
+        const int btnW   = juce::jmax(1, cw / 3);
+        const int stripY = r.y + 2;
+        const int stripH = kChildCountH - 2;
+
+        // "-" button
+        const auto minusBtnR = juce::Rectangle<int>(cx + 2, stripY, btnW - 2, stripH).toFloat();
+        const bool canDec = stepCount > 1;
+        g.setColour(canDec ? Palette::dimOutline().withAlpha(0.5f)
+                           : Palette::dimOutline().withAlpha(0.2f));
+        g.drawRoundedRectangle(minusBtnR, 2.0f, 0.75f);
+        g.setColour(canDec ? Palette::text() : Palette::dimOutline().withAlpha(0.3f));
         g.setFont(juce::Font(9.0f));
-        g.drawFittedText(juce::String(stepCount) + " steps",
-                         countR, juce::Justification::centred, 1);
+        g.drawFittedText("-", minusBtnR.toNearestInt(), juce::Justification::centred, 1);
+
+        // Count label in middle third
+        const auto labelR = juce::Rectangle<int>(cx + btnW, stripY, cw - 2 * btnW, stripH);
+        g.setColour(childOn ? Palette::accent().withAlpha(0.25f)
+                            : Palette::dimOutline().withAlpha(0.12f));
+        g.fillRoundedRectangle(labelR.toFloat(), 2.0f);
+        g.setColour(childOn ? Palette::accent() : Palette::dimOutline());
+        g.drawRoundedRectangle(labelR.toFloat(), 2.0f, 0.75f);
+        g.setFont(juce::Font(9.0f));
+        g.drawFittedText(juce::String(stepCount),
+                         labelR, juce::Justification::centred, 1);
+
+        // "+" button
+        const auto plusBtnR = juce::Rectangle<int>(cx + cw - btnW, stripY, btnW - 2, stripH).toFloat();
+        const bool canInc = stepCount < NUM_STEPS;
+        g.setColour(canInc ? Palette::dimOutline().withAlpha(0.5f)
+                           : Palette::dimOutline().withAlpha(0.2f));
+        g.drawRoundedRectangle(plusBtnR, 2.0f, 0.75f);
+        g.setColour(canInc ? Palette::text() : Palette::dimOutline().withAlpha(0.3f));
+        g.setFont(juce::Font(9.0f));
+        g.drawFittedText("+", plusBtnR.toNearestInt(), juce::Justification::centred, 1);
 
         // ---- Child pitch mini-grid ------------------------------------------
         const int gridY    = r.y + kChildCountH + 2;
         const int gridH    = r.h - kChildCountH - 4;
-        const int cellW    = cw / stepCount;
-        const int miniH    = gridH / kPitchRows;
+        const int cellW    = juce::jmax(1, cw / stepCount);
+        const int miniH    = juce::jmax(1, gridH / kPitchRows);
         const float cornerR = 2.0f;
 
         for (int cs = 0; cs < stepCount; ++cs)

@@ -73,18 +73,36 @@ private:
     //==========================================================================
     // Amplitude envelope
     //==========================================================================
-    int  envSamplePos   = 0;
-    int  envAttackSamps = 0;
-    int  envDecaySamps  = 0;
+    static constexpr float kEnvMin = 0.1f;  // floor: never absolute silence
+
+    int   envSamplePos   = 0;
+    int   envAttackSamps = 0;
+    int   envDecaySamps  = 0;
+    float envStartGain   = 1.0f; // gain at moment of step/child trigger
 
     float envelopeGain() const noexcept
     {
+        // No shaping: hold at 1.0 permanently
+        if (envAttackSamps == 0 && envDecaySamps == 0)
+            return 1.0f;
+
+        // Attack: ramp from envStartGain → 1.0 over attackSamps
         if (envAttackSamps > 0 && envSamplePos < envAttackSamps)
-            return float(envSamplePos) / float(envAttackSamps);
+        {
+            const float t = float(envSamplePos) / float(envAttackSamps);
+            return envStartGain + (1.0f - envStartGain) * t;
+        }
+
+        // Decay: ramp from 1.0 → kEnvMin over decaySamps
         const int dp = envSamplePos - envAttackSamps;
         if (envDecaySamps > 0 && dp < envDecaySamps)
-            return 1.0f - float(dp) / float(envDecaySamps);
-        return envDecaySamps > 0 ? 0.0f : 1.0f;
+        {
+            const float t = float(dp) / float(envDecaySamps);
+            return 1.0f - (1.0f - kEnvMin) * t;
+        }
+
+        // After decay: hold at minimum (never absolute zero)
+        return kEnvMin;
     }
 
     //==========================================================================

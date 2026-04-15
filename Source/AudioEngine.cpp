@@ -41,6 +41,10 @@ void AudioEngine::triggerStep(int step)
     const int pitch    = state.stepPitch[step].load(std::memory_order_relaxed);
     currentRootHz = semitoneToHz(pitch + rootNote);
 
+    // Capture current gain before applying new step's envelope parameters,
+    // so the next attack ramps from the live amplitude rather than from zero.
+    envStartGain = envelopeGain();
+
     const float atkMs = state.stepAttack[step].load(std::memory_order_relaxed);
     const float decMs = state.stepDecay[step] .load(std::memory_order_relaxed);
     envAttackSamps = int(juce::jmax(0.0f, atkMs) / 1000.0f * sampleRate);
@@ -94,6 +98,8 @@ void AudioEngine::triggerStep(int step)
         // Override pitch with first child step pitch
         const int cPitch = state.childPitch[step][0].load(std::memory_order_relaxed);
         currentRootHz = semitoneToHz(cPitch + rootNote);
+        DBG("[AudioEngine] child mode: step=" << step << " count=" << totalChildSteps
+            << " spStep=" << childSamplesPerStep);
     }
     else
     {
@@ -103,10 +109,13 @@ void AudioEngine::triggerStep(int step)
 
 void AudioEngine::triggerChildPitch(int parentStep, int childIdx)
 {
+    envStartGain = envelopeGain(); // preserve continuity across child transitions
     const int rootNote = state.globalRootNote.load(std::memory_order_relaxed);
     const int pitch    = state.childPitch[parentStep][childIdx].load(std::memory_order_relaxed);
     currentRootHz  = semitoneToHz(pitch + rootNote);
     envSamplePos   = 0; // re-trigger envelope for each child step
+    DBG("[AudioEngine] child pitch: parent=" << parentStep << " child=" << childIdx
+        << " hz=" << currentRootHz);
 }
 
 //==============================================================================
@@ -118,6 +127,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     effectRampProgress = 0;
     effectRampDuration = 22050;
     envSamplePos = envAttackSamps = envDecaySamps = 0;
+    envStartGain = 1.0f;
     wasPlaying    = false;
     currentStep   = -1;
     childMode     = false;
