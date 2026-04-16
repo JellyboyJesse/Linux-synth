@@ -4,6 +4,9 @@
 static constexpr float kTwoPi = 6.283185307179586f;
 static constexpr float kPi    = 3.141592653589793f;
 
+// Replace any non-finite value with 0 to prevent NaN/Inf propagation.
+static inline float sanitise(float v) noexcept { return std::isfinite(v) ? v : 0.0f; }
+
 static constexpr float kLogHarm[NUM_OSCILLATORS] = {
     0.0f, 0.693147181f, 1.098612289f, 1.386294361f
 };
@@ -116,6 +119,37 @@ void AudioEngine::triggerChildPitch(int parentStep, int childIdx)
     envSamplePos   = 0; // re-trigger envelope for each child step
     DBG("[AudioEngine] child pitch: parent=" << parentStep << " child=" << childIdx
         << " hz=" << currentRootHz);
+}
+
+//==============================================================================
+void AudioEngine::resetFxState() noexcept
+{
+    // Clear FDN delay lines, filter states, and shimmer buffer
+    for (int c = 0; c < 4; ++c)
+    {
+        std::fill(fdnBuf[c], fdnBuf[c] + kFdnMaxDelay, 0.0f);
+        fdnFiltSt[c] = 0.0f;
+    }
+    std::fill(shimmerBuf, shimmerBuf + kShimmerBufSize, 0.0f);
+    shimmerReadA    = 0.0f;
+    shimmerReadB    = float(kShimmerBufSize / 2);
+    shimmerWritePos = 0;
+    reverbWasActive = false;
+
+    // Clear granular engine
+    for (auto& g : gran->grains) g.active = false;
+    std::fill(gran->captureBuffer, gran->captureBuffer + kGranBufSize, 0.0f);
+    gran->writeHead             = 0;
+    gran->samplesSinceLastGrain = 0;
+    gran->prevOutL              = 0.0f;
+    gran->prevOutR              = 0.0f;
+    granWasActive = false;
+
+    // Reset oscillator phases so sin() gets clean arguments immediately
+    for (auto& osc : oscs) osc.phase = 0.0f;
+    subOsc.phase = 0.0f;
+
+    DBG("[AudioEngine] NaN/Inf detected — fx state hard reset");
 }
 
 //==============================================================================
@@ -252,7 +286,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             sample += std::sin(oscs[i].phase) * oscs[i].currentAmp;
 
             oscs[i].phase += kTwoPi * oscs[i].frequency / sampleRate;
-            if (oscs[i].phase >= kTwoPi) oscs[i].phase -= kTwoPi;
+            // Wrap bidirectionally: negative phase occurs when freqShift pulls
+            // frequency below zero, causing unbounded negative drift → NaN.
+            if      (oscs[i].phase >= kTwoPi) oscs[i].phase -= kTwoPi;
+            else if (oscs[i].phase <  0.0f)   oscs[i].phase += kTwoPi;
         }
 
         // Sub-oscillator (rootHz × 0.5)
@@ -267,16 +304,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             subOsc.frequency = currentRootHz * 0.5f + fxFreqShift.current;
             sample += std::sin(subOsc.phase) * subOsc.currentAmp;
             subOsc.phase += kTwoPi * subOsc.frequency / sampleRate;
-            if (subOsc.phase >= kTwoPi) subOsc.phase -= kTwoPi;
+            if      (subOsc.phase >= kTwoPi) subOsc.phase -= kTwoPi;
+            else if (subOsc.phase <  0.0f)   subOsc.phase += kTwoPi;
         }
 
         sample *= envGain;
+        sample = sanitise(sample); // stop NaN entering granular/FDN
 
         // ---- Wavefolder ----------------------------------------------------
         if (fxFoldAmount.current > 0.001f)
         {
             const float foldGain = 1.0f + fxFoldAmount.current * 7.0f;
-            sample = std::asin(std::sin(sample * kPi * foldGain)) / kPi;
+            sample = sanitise(std::asin(std::sin(sample * kPi * foldGain)) / kPi);
         }
 
         // ---- Granular engine -----------------------------------------------
@@ -296,7 +335,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             // Write into capture buffer (with feedback)
             const float prevMono = (gran->prevOutL + gran->prevOutR) * 0.5f;
             gran->captureBuffer[gran->writeHead] =
-                sample + fxGranFeedback.current * prevMono;
+                sanitise(sample + fxGranFeedback.current * prevMono);
             gran->writeHead = (gran->writeHead + 1) % kGranBufSize;
 
             // Grain spawning — skip if too many grains active (CPU guard)
@@ -416,7 +455,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             for (int c = 0; c < 4; ++c)
             {
                 yf[c]        = (1.0f - damp) * y[c] + damp * fdnFiltSt[c];
-                fdnFiltSt[c] = yf[c];
+                fdnFiltSt[c] = sanitise(yf[c]); // IIR — one NaN circulates forever
+                yf[c]        = fdnFiltSt[c];
             }
 
             // Hadamard H4 × 0.5 feedback mixing
@@ -474,7 +514,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             for (int c = 0; c < 4; ++c)
             {
                 fdnBuf[c][fdnWrite[c]] =
-                    fdnIn + fb[c] * gain + pitchShifted * shimAmt;
+                    sanitise(fdnIn + fb[c] * gain + pitchShifted * shimAmt);
                 fdnWrite[c] = (fdnWrite[c] + 1) % kFdnMaxDelay;
             }
 
@@ -485,7 +525,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             sampleR = granR * (1.0f - gain) + wetR * gain;
         }
 
-        // ---- Master gain ---------------------------------------------------
+        // ---- Master gain + sanity shield -----------------------------------
+        // If any upstream stage produced a non-finite value, hard-clear all
+        // delay-based state so the corruption doesn't carry to future steps.
+        if (!std::isfinite(sampleL) || !std::isfinite(sampleR))
+        {
+            resetFxState();
+            sampleL = sampleR = 0.0f;
+        }
         outL[n] = sampleL * masterGain;
         if (outR) outR[n] = sampleR * masterGain;
     }

@@ -196,6 +196,7 @@ private:
     //==========================================================================
     void triggerStep(int step);
     void triggerChildPitch(int parentStep, int childIdx);
+    void resetFxState() noexcept; // clears FDN + granular + phases after NaN detection
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };
