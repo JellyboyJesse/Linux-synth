@@ -2,22 +2,21 @@
 
 WireframeLookAndFeel::WireframeLookAndFeel()
 {
-    // --- Global colour overrides ------------------------------------------
-    setColour(juce::ResizableWindow    ::backgroundColourId,  Palette::background());
-    setColour(juce::TextButton         ::buttonColourId,      Palette::background());
-    setColour(juce::TextButton         ::buttonOnColourId,    Palette::accent());
-    setColour(juce::TextButton         ::textColourOffId,     Palette::text());
-    setColour(juce::TextButton         ::textColourOnId,      Palette::background());
-    setColour(juce::ToggleButton       ::textColourId,        Palette::text());
-    setColour(juce::Slider             ::backgroundColourId,  Palette::background());
-    setColour(juce::Slider             ::thumbColourId,       Palette::accent());
-    setColour(juce::Slider             ::trackColourId,       Palette::accent());
-    setColour(juce::Slider             ::textBoxTextColourId, Palette::text());
+    setColour(juce::ResizableWindow    ::backgroundColourId,     Palette::background());
+    setColour(juce::TextButton         ::buttonColourId,         Palette::surface());
+    setColour(juce::TextButton         ::buttonOnColourId,       Palette::accent());
+    setColour(juce::TextButton         ::textColourOffId,        Palette::dark());
+    setColour(juce::TextButton         ::textColourOnId,         juce::Colours::white);
+    setColour(juce::ToggleButton       ::textColourId,           Palette::dark());
+    setColour(juce::Slider             ::backgroundColourId,     Palette::surface());
+    setColour(juce::Slider             ::thumbColourId,          Palette::dark());
+    setColour(juce::Slider             ::trackColourId,          Palette::accent());
+    setColour(juce::Slider             ::textBoxTextColourId,    Palette::dark());
     setColour(juce::Slider             ::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::Label              ::textColourId,        Palette::text());
-    setColour(juce::Label              ::backgroundColourId,  juce::Colours::transparentBlack);
+    setColour(juce::Label              ::textColourId,           Palette::dark());
+    setColour(juce::Label              ::backgroundColourId,     juce::Colours::transparentBlack);
 
-    uiFont = juce::Font(14.0f);
+    uiFont = juce::Font(11.0f);
 }
 
 //==============================================================================
@@ -30,21 +29,25 @@ void WireframeLookAndFeel::drawButtonBackground(
     bool isMouseOverButton,
     bool isButtonDown)
 {
-    const auto bounds  = button.getLocalBounds().toFloat().reduced(1.0f);
-    const bool isOn    = button.getToggleState();
-    const float radius = 5.0f;
+    const auto  bounds = button.getLocalBounds().toFloat().reduced(0.5f);
+    const bool  isOn   = button.getToggleState();
+    const float radius = 6.0f;
 
     if (isOn || isButtonDown)
         g.setColour(Palette::accent());
     else if (isMouseOverButton)
-        g.setColour(Palette::fillActive());
+        g.setColour(Palette::surface().brighter(0.04f));
     else
-        g.setColour(Palette::background());
+        g.setColour(Palette::surface());
 
     g.fillRoundedRectangle(bounds, radius);
 
-    g.setColour(isOn || isButtonDown ? Palette::accent() : Palette::outline());
-    g.drawRoundedRectangle(bounds, radius, 1.5f);
+    // Only show border when not active
+    if (!isOn && !isButtonDown)
+    {
+        g.setColour(Palette::border());
+        g.drawRoundedRectangle(bounds, radius, 0.5f);
+    }
 }
 
 void WireframeLookAndFeel::drawButtonText(
@@ -54,7 +57,7 @@ void WireframeLookAndFeel::drawButtonText(
     bool /*isButtonDown*/)
 {
     const bool isOn = button.getToggleState();
-    g.setColour(isOn ? Palette::background() : Palette::text());
+    g.setColour(isOn ? juce::Colours::white : Palette::dark());
     g.setFont(uiFont);
     g.drawFittedText(button.getButtonText(),
                      button.getLocalBounds(),
@@ -67,22 +70,26 @@ void WireframeLookAndFeel::drawToggleButton(
     bool isMouseOverButton,
     bool isButtonDown)
 {
-    const auto bounds  = button.getLocalBounds().toFloat().reduced(1.0f);
-    const bool isOn    = button.getToggleState();
-    const float radius = 5.0f;
+    const auto  bounds = button.getLocalBounds().toFloat().reduced(0.5f);
+    const bool  isOn   = button.getToggleState();
+    const float radius = 6.0f;
 
     if (isOn)
         g.setColour(Palette::accent());
     else if (isMouseOverButton)
-        g.setColour(Palette::fillActive());
+        g.setColour(Palette::surface().brighter(0.04f));
     else
-        g.setColour(Palette::background());
+        g.setColour(Palette::surface());
 
     g.fillRoundedRectangle(bounds, radius);
-    g.setColour(Palette::outline());
-    g.drawRoundedRectangle(bounds, radius, 1.5f);
 
-    g.setColour(isOn ? Palette::background() : Palette::text());
+    if (!isOn)
+    {
+        g.setColour(Palette::border());
+        g.drawRoundedRectangle(bounds, radius, 0.5f);
+    }
+
+    g.setColour(isOn ? juce::Colours::white : Palette::dark());
     g.setFont(uiFont);
     g.drawFittedText(button.getButtonText(),
                      button.getLocalBounds(),
@@ -90,7 +97,7 @@ void WireframeLookAndFeel::drawToggleButton(
 }
 
 //==============================================================================
-// Sliders — horizontal and vertical linear sliders
+// Sliders — slim 3px track, colAccent fill, colDark 8px thumb dot
 //==============================================================================
 void WireframeLookAndFeel::drawLinearSliderBackground(
     juce::Graphics& g,
@@ -99,14 +106,12 @@ void WireframeLookAndFeel::drawLinearSliderBackground(
     juce::Slider::SliderStyle /*style*/,
     juce::Slider& /*slider*/)
 {
-    const auto trackBounds = juce::Rectangle<float>(
-        float(x), float(y), float(width), float(height));
-    const float radius = 3.0f;
+    const float trackH  = 3.0f;
+    const float trackY  = float(y) + float(height) * 0.5f - trackH * 0.5f;
+    const auto  track   = juce::Rectangle<float>(float(x), trackY, float(width), trackH);
 
-    g.setColour(Palette::background());
-    g.fillRoundedRectangle(trackBounds, radius);
-    g.setColour(Palette::dimOutline());
-    g.drawRoundedRectangle(trackBounds, radius, 1.0f);
+    g.setColour(Palette::border());
+    g.fillRoundedRectangle(track, trackH * 0.5f);
 }
 
 void WireframeLookAndFeel::drawLinearSliderThumb(
@@ -114,9 +119,9 @@ void WireframeLookAndFeel::drawLinearSliderThumb(
     int x, int y, int width, int height,
     float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
     juce::Slider::SliderStyle style,
-    juce::Slider& slider)
+    juce::Slider& /*slider*/)
 {
-    const float thumbRadius = float(getSliderThumbRadius(slider));
+    const float thumbR = 4.0f; // 8px diameter
 
     float cx, cy;
     if (style == juce::Slider::LinearHorizontal)
@@ -130,14 +135,8 @@ void WireframeLookAndFeel::drawLinearSliderThumb(
         cy = sliderPos;
     }
 
-    g.setColour(Palette::background());
-    g.fillEllipse(cx - thumbRadius, cy - thumbRadius,
-                  thumbRadius * 2.0f, thumbRadius * 2.0f);
-    g.setColour(Palette::accent());
-    g.drawEllipse(cx - thumbRadius, cy - thumbRadius,
-                  thumbRadius * 2.0f, thumbRadius * 2.0f, 2.0f);
-    // Centre dot
-    g.fillEllipse(cx - 2.5f, cy - 2.5f, 5.0f, 5.0f);
+    g.setColour(Palette::dark());
+    g.fillEllipse(cx - thumbR, cy - thumbR, thumbR * 2.0f, thumbR * 2.0f);
 }
 
 void WireframeLookAndFeel::drawLinearSlider(
@@ -147,28 +146,31 @@ void WireframeLookAndFeel::drawLinearSlider(
     juce::Slider::SliderStyle style,
     juce::Slider& slider)
 {
-    drawLinearSliderBackground(g, x, y, width, height,
-                               sliderPos, minSliderPos, maxSliderPos, style, slider);
+    const float trackH  = 3.0f;
+    const float trackY  = float(y) + float(height) * 0.5f - trackH * 0.5f;
+    const auto  track   = juce::Rectangle<float>(float(x), trackY, float(width), trackH);
 
-    // Draw filled track segment from min edge to thumb
-    const float radius = 3.0f;
+    // Background
+    g.setColour(Palette::border());
+    g.fillRoundedRectangle(track, trackH * 0.5f);
+
+    // Fill — from min edge to thumb position
     if (style == juce::Slider::LinearHorizontal)
     {
         const float fillW = sliderPos - float(x);
         if (fillW > 0.0f)
         {
-            g.setColour(Palette::accent().withAlpha(0.5f));
-            g.fillRoundedRectangle(float(x), float(y), fillW, float(height), radius);
+            g.setColour(Palette::accent());
+            g.fillRoundedRectangle(float(x), trackY, fillW, trackH, trackH * 0.5f);
         }
     }
-    else // LinearVertical
+    else
     {
-        const float trackBottom = float(y) + float(height);
-        const float fillH = trackBottom - sliderPos;
+        const float fillH = (float(y) + float(height)) - sliderPos;
         if (fillH > 0.0f)
         {
-            g.setColour(Palette::accent().withAlpha(0.5f));
-            g.fillRoundedRectangle(float(x), sliderPos, float(width), fillH, radius);
+            g.setColour(Palette::accent());
+            g.fillRoundedRectangle(float(x), sliderPos, float(width), fillH, trackH * 0.5f);
         }
     }
 

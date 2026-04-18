@@ -28,13 +28,13 @@ void WaveformDisplay::timerCallback()
 void WaveformDisplay::paint(juce::Graphics& g)
 {
     const auto  bounds  = getLocalBounds().toFloat().reduced(1.0f);
-    const float cornerR = 4.0f;
+    const float cornerR = 10.0f;
 
-    // Background + outline
+    // Background + slim border
     g.setColour(Palette::background());
     g.fillRoundedRectangle(bounds, cornerR);
-    g.setColour(Palette::dimOutline().withAlpha(0.5f));
-    g.drawRoundedRectangle(bounds, cornerR, 1.0f);
+    g.setColour(Palette::border());
+    g.drawRoundedRectangle(bounds, cornerR, 0.5f);
 
     // Composite waveform path — one full period
     static constexpr int kPts = 320;
@@ -55,13 +55,13 @@ void WaveformDisplay::paint(juce::Graphics& g)
         else        path.lineTo(px, py);
     }
 
-    g.setColour(Palette::accent());
+    g.setColour(Palette::dark());
     g.strokePath(path, juce::PathStrokeType(1.5f,
                                             juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));
 
     // Label
-    g.setColour(Palette::dimOutline());
+    g.setColour(Palette::mid());
     g.setFont(juce::Font(10.0f));
     g.drawText("Waveform", bounds.reduced(6.0f, 3.0f),
                juce::Justification::topLeft, false);

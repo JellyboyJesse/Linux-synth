@@ -2,26 +2,28 @@
 #include <JuceHeader.h>
 
 //==============================================================================
-// Palette
+// Palette — amber and ink on warm off-white
 //==============================================================================
 namespace Palette
 {
-    inline juce::Colour background() { return juce::Colour(0xFFD6E4F0); }
-    inline juce::Colour accent()     { return juce::Colour(0xFF2E6E9E); }
-    inline juce::Colour text()       { return juce::Colour(0xFF1A3F5C); }
-    inline juce::Colour outline()    { return juce::Colour(0xFF2E6E9E); }
-    inline juce::Colour dimOutline() { return juce::Colour(0xFF8AAFC8); }
-    inline juce::Colour fillActive() { return juce::Colour(0x402E6E9E); } // accent @25%
+    // Core colours
+    inline juce::Colour background() { return juce::Colour(0xFFF5F3EE); } // warm off-white
+    inline juce::Colour surface()    { return juce::Colour(0xFFECEAE4); } // inactive cells
+    inline juce::Colour dark()       { return juce::Colour(0xFF1A1A18); } // near-black
+    inline juce::Colour accent()     { return juce::Colour(0xFFE8A020); } // amber
+    inline juce::Colour section()    { return juce::Colour(0xFFC4340A); } // deep red-orange
+    inline juce::Colour mid()        { return juce::Colour(0xFF88887E); } // mid grey-brown
+
+    // Semantic aliases kept for backward compatibility
+    inline juce::Colour text()       { return dark(); }
+    inline juce::Colour outline()    { return dark().withAlpha(0.15f); }
+    inline juce::Colour dimOutline() { return mid(); }
+    inline juce::Colour fillActive() { return accent().withAlpha(0.15f); }
+    inline juce::Colour border()     { return dark().withAlpha(0.15f); }
 }
 
 //==============================================================================
 // WireframeLookAndFeel
-//
-// Blueprint / wireframe aesthetic:
-//   • Flat background, no gradients, no drop shadows
-//   • All components outlined only (rounded rectangles)
-//   • Active / selected state fills with accent colour
-//   • Single type weight, sentence-case labels
 //==============================================================================
 class WireframeLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -69,7 +71,7 @@ public:
                                juce::Slider::SliderStyle style,
                                juce::Slider& slider) override;
 
-    int  getSliderThumbRadius(juce::Slider&) override { return 7; }
+    int  getSliderThumbRadius(juce::Slider&) override { return 4; }
 
     //==========================================================================
     // Labels

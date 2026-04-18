@@ -278,7 +278,6 @@ void EffectsView::paint(juce::Graphics& g)
 void EffectsView::drawColumnHeaders(juce::Graphics& g) const
 {
     const float cornerR = 4.0f;
-    g.setFont(juce::Font(12.0f));
 
     for (int col = 0; col < NUM_STEPS; ++col)
     {
@@ -291,47 +290,50 @@ void EffectsView::drawColumnHeaders(juce::Graphics& g) const
         if (isPlay)
             g.setColour(Palette::accent());
         else if (isSel)
-            g.setColour(Palette::fillActive());
+            g.setColour(Palette::accent().withAlpha(0.18f));
         else
-            g.setColour(Palette::background());
+            g.setColour(Palette::surface());
         g.fillRoundedRectangle(hb, cornerR);
 
-        g.setColour(isPlay ? Palette::accent() : Palette::outline());
-        g.drawRoundedRectangle(hb, cornerR, 1.5f);
+        if (!isPlay)
+        {
+            g.setColour(Palette::border());
+            g.drawRoundedRectangle(hb, cornerR, 0.5f);
+        }
 
-        g.setColour(isPlay ? Palette::background() : Palette::text());
+        g.setFont(isPlay ? juce::Font(11.0f, juce::Font::bold) : juce::Font(11.0f));
+        g.setColour(isPlay ? Palette::dark() : (isSel ? Palette::dark() : Palette::mid()));
         g.drawFittedText("Step " + juce::String(col + 1),
                          hb.toNearestInt(), juce::Justification::centred, 1);
     }
 
-    g.setColour(Palette::dimOutline().withAlpha(0.4f));
+    g.setColour(Palette::border());
     g.drawHorizontalLine(kColHeaderH, float(kLabelW), float(getWidth()));
 }
 
 void EffectsView::drawSectionHeader(juce::Graphics& g, const RowInfo& r) const
 {
-    const auto bounds = juce::Rectangle<int>(0, r.y, getWidth(), r.h).toFloat();
-    g.setColour(Palette::accent().withAlpha(0.12f));
-    g.fillRect(bounds);
-    g.setColour(Palette::accent().withAlpha(0.4f));
-    g.drawHorizontalLine(r.y, 0.0f, float(getWidth()));
+    const float pillH = float(r.h) - 4.0f;
+    const auto  pill  = juce::Rectangle<float>(4.0f, float(r.y) + 2.0f,
+                                               float(getWidth()) - 8.0f, pillH);
+    g.setColour(Palette::section());
+    g.fillRoundedRectangle(pill, pillH * 0.5f);
 
-    g.setColour(Palette::accent());
-    g.setFont(juce::Font(11.0f));
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(10.0f, juce::Font::bold));
     g.drawFittedText(r.label.toUpperCase(),
-                     juce::Rectangle<int>(kLabelW + 4, r.y, getWidth() - kLabelW - 8, r.h),
+                     pill.withLeft(pill.getX() + 12.0f).toNearestInt(),
                      juce::Justification::centredLeft, 1);
 }
 
 void EffectsView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
 {
-    const float cornerR = 3.0f;
-    const int   cw      = colW();
-    const bool  rowSel  = (selectedRowIndex >= 0
-                           && rows[size_t(selectedRowIndex)].y == r.y);
+    const int  cw     = colW();
+    const bool rowSel = (selectedRowIndex >= 0
+                         && rows[size_t(selectedRowIndex)].y == r.y);
 
     // Row label
-    g.setColour(rowSel ? Palette::accent() : Palette::text());
+    g.setColour(rowSel ? Palette::accent() : Palette::mid());
     g.setFont(juce::Font(10.0f));
     g.drawFittedText(r.label,
                      juce::Rectangle<int>(0, r.y, kLabelW - 4, r.h),
@@ -341,39 +343,49 @@ void EffectsView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
     {
         const bool colSel  = (col == selectedCol);
         const bool colPlay = (col == currentPlayStep);
-        const bool hilight = colSel && rowSel;
 
         const float raw  = getRaw(r.paramId, col);
         const float norm = rawToNorm(r.paramId, raw);
+        const float cx   = float(colX(col));
+        const float cy   = float(r.y) + float(r.h) * 0.5f;
 
-        const float vPad  = float(r.h) * 0.25f;
-        const auto  trackR = juce::Rectangle<float>(
-            float(colX(col)) + 4.0f, float(r.y) + vPad,
-            float(cw) - 8.0f, float(r.h) - vPad * 2.0f);
+        // Cell background
+        g.setColour(colPlay ? Palette::accent().withAlpha(0.10f)
+                            : (colSel ? Palette::accent().withAlpha(0.06f)
+                                      : Palette::surface()));
+        g.fillRect(juce::Rectangle<float>(cx, float(r.y), float(cw), float(r.h)));
 
-        // Track outline
-        g.setColour(hilight ? Palette::accent()
-                    : colSel ? Palette::accent().withAlpha(0.5f)
-                             : Palette::dimOutline().withAlpha(0.4f));
-        g.drawRoundedRectangle(trackR, cornerR, hilight ? 1.5f : 0.75f);
+        // 3px centred track
+        const float trackX = cx + 6.0f;
+        const float trackW = float(cw) - 12.0f;
+        const float trackH = 3.0f;
+        const float trackY = cy - trackH * 0.5f;
 
-        // Filled portion
+        g.setColour(Palette::border());
+        g.fillRoundedRectangle(trackX, trackY, trackW, trackH, trackH * 0.5f);
+
         if (norm > 0.001f)
         {
-            const auto fillR = trackR.withWidth(trackR.getWidth() * norm);
-            g.setColour(colPlay ? Palette::accent()
-                                : Palette::accent().withAlpha(hilight ? 0.85f : 0.5f));
-            g.fillRoundedRectangle(fillR, cornerR);
+            g.setColour(Palette::accent());
+            g.fillRoundedRectangle(trackX, trackY, trackW * norm, trackH, trackH * 0.5f);
         }
 
-        // Value label
-        g.setColour(Palette::dimOutline());
+        // 8px dark thumb dot
+        const float thumbR  = 4.0f;
+        const float thumbCX = trackX + trackW * norm;
+        g.setColour(Palette::dark());
+        g.fillEllipse(thumbCX - thumbR, cy - thumbR, thumbR * 2.0f, thumbR * 2.0f);
+
+        // Value label above track
+        g.setColour(Palette::dark());
         g.setFont(juce::Font(9.0f));
         g.drawFittedText(formatVal(r.paramId, raw),
-                         trackR.toNearestInt(), juce::Justification::centred, 1);
+                         juce::Rectangle<float>(cx, float(r.y), float(cw),
+                                                cy - trackH * 0.5f).toNearestInt(),
+                         juce::Justification::centred, 1);
     }
 
     // Row separator
-    g.setColour(Palette::dimOutline().withAlpha(0.2f));
+    g.setColour(Palette::border());
     g.drawHorizontalLine(r.y + r.h - 1, float(kLabelW), float(getWidth()));
 }

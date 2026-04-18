@@ -24,6 +24,7 @@ TransportBar::TransportBar(SynthSharedState& sharedState)
     // ---- BPM slider --------------------------------------------------------
     addAndMakeVisible(bpmLabel);
     bpmLabel.setJustificationType(juce::Justification::centredRight);
+    bpmLabel.setColour(juce::Label::textColourId, juce::Colours::white);
 
     addAndMakeVisible(bpmSlider);
     bpmSlider.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -34,6 +35,7 @@ TransportBar::TransportBar(SynthSharedState& sharedState)
     addAndMakeVisible(bpmValue);
     bpmValue.setText(juce::String(int(state.bpm.load())), juce::dontSendNotification);
     bpmValue.setJustificationType(juce::Justification::centredLeft);
+    bpmValue.setColour(juce::Label::textColourId, juce::Colours::white);
 
     bpmSlider.onValueChange = [this]
     {
@@ -45,6 +47,7 @@ TransportBar::TransportBar(SynthSharedState& sharedState)
     // ---- Volume slider -----------------------------------------------------
     addAndMakeVisible(volLabel);
     volLabel.setJustificationType(juce::Justification::centredRight);
+    volLabel.setColour(juce::Label::textColourId, juce::Colours::white);
 
     addAndMakeVisible(volSlider);
     volSlider.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -92,7 +95,16 @@ void TransportBar::resized()
 //==============================================================================
 void TransportBar::paint(juce::Graphics& g)
 {
-    g.fillAll(Palette::background());
-    g.setColour(Palette::outline());
-    g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.0f, 1.5f);
+    // Dark background with 10px radius on top corners only
+    const auto bounds = getLocalBounds().toFloat();
+    juce::Path p;
+    p.addRoundedRectangle(bounds.getX(), bounds.getY(),
+                          bounds.getWidth(), bounds.getHeight(),
+                          10.0f, 10.0f,
+                          true,  // top-left
+                          true,  // top-right
+                          false, // bottom-left
+                          false);// bottom-right
+    g.setColour(Palette::dark());
+    g.fillPath(p);
 }

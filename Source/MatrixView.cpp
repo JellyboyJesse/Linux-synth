@@ -354,7 +354,6 @@ void MatrixView::paint(juce::Graphics& g)
 void MatrixView::drawColumnHeaders(juce::Graphics& g) const
 {
     const float cornerR = 4.0f;
-    g.setFont(juce::Font(12.0f));
 
     for (int col = 0; col < NUM_STEPS; ++col)
     {
@@ -367,17 +366,21 @@ void MatrixView::drawColumnHeaders(juce::Graphics& g) const
         if (isPlay)
             g.setColour(Palette::accent());
         else if (isSel)
-            g.setColour(Palette::fillActive());
+            g.setColour(Palette::accent().withAlpha(0.18f));
         else
-            g.setColour(Palette::background());
+            g.setColour(Palette::surface());
         g.fillRoundedRectangle(hb, cornerR);
 
-        g.setColour(isPlay ? Palette::accent() : Palette::outline());
-        g.drawRoundedRectangle(hb, cornerR, 1.5f);
+        if (!isPlay)
+        {
+            g.setColour(Palette::border());
+            g.drawRoundedRectangle(hb, cornerR, 0.5f);
+        }
 
         // Shift label left to make room for toggle
         const auto labelR = hb.withTrimmedRight(float(kToggleSize + 2));
-        g.setColour(isPlay ? Palette::background() : Palette::text());
+        g.setFont(isPlay ? juce::Font(11.0f, juce::Font::bold) : juce::Font(11.0f));
+        g.setColour(isPlay ? Palette::dark() : (isSel ? Palette::dark() : Palette::mid()));
         g.drawFittedText("Step " + juce::String(col + 1),
                          labelR.toNearestInt(), juce::Justification::centred, 1);
 
@@ -387,42 +390,42 @@ void MatrixView::drawColumnHeaders(juce::Graphics& g) const
             hb.getRight() - float(kToggleSize),
             hb.getCentreY() - float(kToggleSize) * 0.5f,
             float(kToggleSize), float(kToggleSize));
-        g.setColour(expanded ? Palette::accent()
-                             : Palette::dimOutline().withAlpha(0.6f));
-        g.drawRoundedRectangle(toggleR, 2.0f, 1.0f);
+        g.setColour(expanded ? Palette::accent() : Palette::border());
+        g.drawRoundedRectangle(toggleR, 2.0f, 0.75f);
+        g.setColour(expanded ? Palette::dark() : Palette::mid());
         g.setFont(juce::Font(9.0f));
         g.drawFittedText(expanded ? "-" : "+",
                          toggleR.toNearestInt(), juce::Justification::centred, 1);
     }
 
     // Separator line
-    g.setColour(Palette::dimOutline().withAlpha(0.4f));
+    g.setColour(Palette::border());
     g.drawHorizontalLine(kColHeaderH, float(kLabelW), float(getWidth()));
 }
 
 void MatrixView::drawSectionHeader(juce::Graphics& g, const RowInfo& r) const
 {
-    const auto bounds = juce::Rectangle<int>(0, r.y, getWidth(), r.h).toFloat();
-    g.setColour(Palette::accent().withAlpha(0.12f));
-    g.fillRect(bounds);
-    g.setColour(Palette::accent().withAlpha(0.4f));
-    g.drawHorizontalLine(r.y, 0.0f, float(getWidth()));
+    const float pillH = float(r.h) - 4.0f;
+    const auto  pill  = juce::Rectangle<float>(4.0f, float(r.y) + 2.0f,
+                                               float(getWidth()) - 8.0f, pillH);
+    g.setColour(Palette::section());
+    g.fillRoundedRectangle(pill, pillH * 0.5f);
 
-    g.setColour(Palette::accent());
-    g.setFont(juce::Font(11.0f));
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(10.0f, juce::Font::bold));
     g.drawFittedText(r.label.toUpperCase(),
-                     juce::Rectangle<int>(kLabelW + 4, r.y, getWidth() - kLabelW - 8, r.h),
+                     pill.withLeft(pill.getX() + 12.0f).toNearestInt(),
                      juce::Justification::centredLeft, 1);
 }
 
 void MatrixView::drawPitchRow(juce::Graphics& g, const RowInfo& r) const
 {
-    const float cornerR  = 3.0f;
-    const int   cw       = colW();
+    const float cornerR = 3.0f;
+    const int   cw      = colW();
 
     // Row label
     const bool rowSel = (selectedRowIndex >= 0 && rows[size_t(selectedRowIndex)].y == r.y);
-    g.setColour(rowSel ? Palette::accent() : Palette::text());
+    g.setColour(rowSel ? Palette::accent() : Palette::mid());
     g.setFont(juce::Font(11.0f));
     g.drawFittedText(r.label,
                      juce::Rectangle<int>(0, r.y, kLabelW - 4, r.h),
@@ -437,39 +440,36 @@ void MatrixView::drawPitchRow(juce::Graphics& g, const RowInfo& r) const
 
         for (int mrow = 0; mrow < kPitchRows; ++mrow)
         {
-            // mrow 0 = top = semitone 7, mrow 7 = bottom = semitone 0
             const int semi      = (kPitchRows - 1) - mrow;
             const bool isActive = (semi == stepPitch);
-            const float mx = float(cx) + 3.0f;
-            const float my = float(r.y) + float(mrow) * float(r.h) / float(kPitchRows) + 1.0f;
-            const float mw = float(cw) - 6.0f;
-            const float mh = float(r.h) / float(kPitchRows) - 2.0f;
+            const float mx = float(cx) + 2.0f;
+            const float my = float(r.y) + float(mrow) * float(r.h) / float(kPitchRows) + 0.5f;
+            const float mw = float(cw) - 4.0f;
+            const float mh = float(r.h) / float(kPitchRows) - 1.0f;
             const auto  cell = juce::Rectangle<float>(mx, my, mw, mh);
 
-            if (isActive)
-            {
-                g.setColour(colPlay ? Palette::accent()
-                                    : Palette::accent().withAlpha(0.75f));
-                g.fillRoundedRectangle(cell, cornerR);
-            }
+            // Cell background
+            g.setColour(isActive ? (colPlay ? Palette::accent()
+                                            : Palette::accent().withAlpha(0.75f))
+                                 : Palette::surface());
+            g.fillRoundedRectangle(cell, cornerR);
 
-            // Highlight intersection of selected row×column (pitch row is special: entire row)
-            const bool intersect = colSel && rowSel && isActive;
-            g.setColour(intersect ? Palette::accent()
-                        : isActive ? Palette::accent().withAlpha(0.5f)
-                                   : Palette::dimOutline().withAlpha(0.35f));
-            g.drawRoundedRectangle(cell, cornerR, intersect ? 1.5f : 0.75f);
+            // Cell outline
+            g.setColour(isActive ? Palette::accent()
+                        : (colPlay || colSel) ? Palette::border()
+                                              : Palette::border().withAlpha(0.5f));
+            g.drawRoundedRectangle(cell, cornerR, isActive ? 1.0f : 0.5f);
         }
 
-        // Column outline
+        // Column highlight ring for playing/selected
         if (colPlay || colSel)
         {
             const auto colRect = juce::Rectangle<float>(
-                float(cx) + 1.5f, float(r.y) + 1.5f,
-                float(cw) - 3.0f, float(r.h) - 3.0f);
+                float(cx) + 1.0f, float(r.y) + 1.0f,
+                float(cw) - 2.0f, float(r.h) - 2.0f);
             g.setColour(colPlay ? Palette::accent()
                                 : Palette::accent().withAlpha(0.5f));
-            g.drawRoundedRectangle(colRect, cornerR, colPlay ? 2.0f : 1.5f);
+            g.drawRoundedRectangle(colRect, cornerR, colPlay ? 1.5f : 1.0f);
         }
     }
 }
@@ -481,7 +481,7 @@ void MatrixView::drawBarRow(juce::Graphics& g, const RowInfo& r) const
     const bool  rowSel  = (selectedRowIndex >= 0 && rows[size_t(selectedRowIndex)].y == r.y);
 
     // Row label
-    g.setColour(rowSel ? Palette::accent() : Palette::text());
+    g.setColour(rowSel ? Palette::accent() : Palette::mid());
     g.setFont(juce::Font(11.0f));
     g.drawFittedText(r.label,
                      juce::Rectangle<int>(0, r.y, kLabelW - 4, r.h),
@@ -491,47 +491,48 @@ void MatrixView::drawBarRow(juce::Graphics& g, const RowInfo& r) const
     {
         const bool colSel  = (col == selectedCol);
         const bool colPlay = (col == currentPlayStep);
-        const bool hilight = colSel && rowSel;
 
         const float norm = getCellValue(r, col);
-        const float cx = float(colX(col));
-        const float trackPad = 5.0f;
-        const auto  trackR = juce::Rectangle<float>(
-            cx + trackPad, float(r.y) + trackPad,
-            float(cw) - trackPad * 2.0f, float(r.h) - trackPad * 2.0f);
+        const float cx   = float(colX(col));
+        const float pad  = 4.0f;
+        const auto  cellR = juce::Rectangle<float>(
+            cx + pad, float(r.y) + pad,
+            float(cw) - pad * 2.0f, float(r.h) - pad * 2.0f);
 
-        // Track outline
-        g.setColour(hilight ? Palette::accent()
-                    : colSel ? Palette::accent().withAlpha(0.5f)
-                             : Palette::dimOutline().withAlpha(0.4f));
-        g.drawRoundedRectangle(trackR, cornerR, hilight ? 1.5f : 0.75f);
+        // Cell background
+        g.setColour(Palette::surface());
+        g.fillRoundedRectangle(cellR, cornerR);
 
-        // Filled bar (bottom → up)
+        // Accent fill from bottom
         if (norm > 0.001f)
         {
-            const float fillH = trackR.getHeight() * norm;
-            const auto  fillR = trackR.withTop(trackR.getBottom() - fillH);
+            const float fillH = cellR.getHeight() * norm;
+            const auto  fillR = cellR.withTop(cellR.getBottom() - fillH);
             g.setColour(colPlay ? Palette::accent()
-                                : Palette::accent().withAlpha(hilight ? 0.85f : 0.6f));
+                                : Palette::accent().withAlpha(0.75f));
             g.fillRoundedRectangle(fillR, cornerR);
         }
 
+        // Cell outline
+        g.setColour((colPlay || colSel) ? Palette::accent().withAlpha(0.6f)
+                                        : Palette::border());
+        g.drawRoundedRectangle(cellR, cornerR, (colPlay || colSel) ? 1.0f : 0.5f);
+
         // Value text
-        g.setColour(Palette::dimOutline());
+        g.setColour(Palette::dark());
         g.setFont(juce::Font(9.0f));
-        g.drawFittedText(juce::String(norm, 2), trackR.toNearestInt(),
+        g.drawFittedText(juce::String(norm, 2), cellR.toNearestInt(),
                          juce::Justification::centredTop, 1);
     }
 }
 
 void MatrixView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
 {
-    const float cornerR = 3.0f;
-    const int   cw      = colW();
-    const bool  rowSel  = (selectedRowIndex >= 0 && rows[size_t(selectedRowIndex)].y == r.y);
+    const int  cw     = colW();
+    const bool rowSel = (selectedRowIndex >= 0 && rows[size_t(selectedRowIndex)].y == r.y);
 
     // Row label
-    g.setColour(rowSel ? Palette::accent() : Palette::text());
+    g.setColour(rowSel ? Palette::accent() : Palette::mid());
     g.setFont(juce::Font(10.0f));
     g.drawFittedText(r.label,
                      juce::Rectangle<int>(0, r.y, kLabelW - 4, r.h),
@@ -541,45 +542,53 @@ void MatrixView::drawSliderRow(juce::Graphics& g, const RowInfo& r) const
     {
         const bool colSel  = (col == selectedCol);
         const bool colPlay = (col == currentPlayStep);
-        const bool hilight = colSel && rowSel;
 
         const float norm = getCellValue(r, col);
-        const float cx = float(colX(col));
-        const float vPad = float(r.h) * 0.25f;
-        const auto  trackR = juce::Rectangle<float>(
-            cx + 4.0f, float(r.y) + vPad,
-            float(cw) - 8.0f, float(r.h) - vPad * 2.0f);
+        const float cx   = float(colX(col));
+        const float cy   = float(r.y) + float(r.h) * 0.5f;
 
-        // Track outline
-        g.setColour(hilight ? Palette::accent()
-                    : colSel ? Palette::accent().withAlpha(0.5f)
-                             : Palette::dimOutline().withAlpha(0.4f));
-        g.drawRoundedRectangle(trackR, cornerR, hilight ? 1.5f : 0.75f);
+        // Cell background
+        g.setColour(colPlay ? Palette::accent().withAlpha(0.08f) : Palette::surface());
+        g.fillRect(juce::Rectangle<float>(cx, float(r.y), float(cw), float(r.h)));
 
-        // Filled portion (left → right)
+        // 3px centred track
+        const float trackX = cx + 6.0f;
+        const float trackW = float(cw) - 12.0f;
+        const float trackH = 3.0f;
+        const float trackY = cy - trackH * 0.5f;
+
+        g.setColour(Palette::border());
+        g.fillRoundedRectangle(trackX, trackY, trackW, trackH, trackH * 0.5f);
+
         if (norm > 0.001f)
         {
-            const auto fillR = trackR.withWidth(trackR.getWidth() * norm);
-            g.setColour(colPlay ? Palette::accent()
-                                : Palette::accent().withAlpha(hilight ? 0.85f : 0.5f));
-            g.fillRoundedRectangle(fillR, cornerR);
+            g.setColour(Palette::accent());
+            g.fillRoundedRectangle(trackX, trackY, trackW * norm, trackH, trackH * 0.5f);
         }
 
-        // Value label
+        // 8px dark thumb dot
+        const float thumbR  = 4.0f;
+        const float thumbCX = trackX + trackW * norm;
+        g.setColour(Palette::dark());
+        g.fillEllipse(thumbCX - thumbR, cy - thumbR, thumbR * 2.0f, thumbR * 2.0f);
+
+        // Value label above track
         const float raw = rawFromNorm(r, norm);
         juce::String valStr;
         if      (r.type == RowType::AttackSlider)   valStr = juce::String(int(raw)) + "ms";
         else if (r.type == RowType::DecaySlider)    valStr = juce::String(int(raw)) + "ms";
-        else if (r.type == RowType::DurationSlider) valStr = juce::String(raw, 2) + " beats";
+        else if (r.type == RowType::DurationSlider) valStr = juce::String(raw, 2) + "b";
 
-        g.setColour(Palette::dimOutline());
+        g.setColour(Palette::dark());
         g.setFont(juce::Font(9.0f));
-        g.drawFittedText(valStr, trackR.toNearestInt(),
+        g.drawFittedText(valStr,
+                         juce::Rectangle<float>(cx, float(r.y), float(cw),
+                                                cy - trackH * 0.5f).toNearestInt(),
                          juce::Justification::centred, 1);
     }
 
     // Row separator
-    g.setColour(Palette::dimOutline().withAlpha(0.2f));
+    g.setColour(Palette::border());
     g.drawHorizontalLine(r.y + r.h - 1, float(kLabelW), float(getWidth()));
 }
 
@@ -705,6 +714,6 @@ void MatrixView::drawChildPitchRow(juce::Graphics& g, const RowInfo& r) const
     }
 
     // Row separator
-    g.setColour(Palette::dimOutline().withAlpha(0.2f));
+    g.setColour(Palette::border());
     g.drawHorizontalLine(r.y + r.h - 1, float(kLabelW), float(getWidth()));
 }
